@@ -1,0 +1,22 @@
+{{ 'use spring_grpc::GrpcPlugin;' if 'grpc' in features }}
+{{ 'use spring::{auto_config, App};' if 'rest' in features else 'use spring::App;' }}
+{{ 'use spring_sea_orm::{SeaOrmPlugin};' if 'sea-orm' in features }}
+{{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
+{{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in features }}
+
+mod service;
+
+{{ '#[auto_config(WebConfigurator)]' if 'rest' in features -}}
+#[tokio::main]
+async fn main() {
+    App::new()
+        .opentelemetry_attrs([
+            KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
+            KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
+        ])
+        {{ '.add_plugin(SeaOrmPlugin)' if 'sea-orm' in features }}
+        {{ '.add_plugin(WebPlugin)' if 'rest' in features }}
+        {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
+        {{ '.add_plugin(GrpcPlugin)' if 'grpc' in features }}
+        .run().await
+}

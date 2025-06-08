@@ -1,0 +1,77 @@
+schemaVersion: v1
+
+questions:
+  project_name:
+    type: str
+    help: Please enter the name of your application
+    default: "my_app"
+
+  project_author:
+    type: str
+    help: "Please enter the author's name for {{project_name}}"
+
+  project_version:
+    type: str
+    help: Please enter the version of the project
+    default: "0.1.0"
+
+  project_edition:
+    type: str
+    help: Please enter the edition of the project
+    default: "2021"
+
+  features:
+    type: str
+    help: What features do you want to enable?
+    multiselect: true
+    default:
+      - grpc
+      - sea-orm
+      - open-telemetry
+    choices:
+      - grpc
+      - rest
+      - sea-orm
+      - open-telemetry
+
+  entities:
+    type: json
+    help: Configure your entities
+    default: |
+      {
+        "user": {
+            "$id": "https://example.com/user-profile.schema.json",
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "description": "A representation of a user profile",
+            "type": "object",
+            "required": [
+                "username",
+                "email"
+            ],
+            "properties": {
+                "username": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string",
+                    "format": "email"
+                },
+                "fullName": {
+                    "type": "string"
+                },
+                "age": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "location": {
+                    "type": "string"
+                },
+                "interests": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+      }

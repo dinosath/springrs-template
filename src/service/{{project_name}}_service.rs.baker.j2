@@ -1,0 +1,27 @@
+use tonic::{Request, Response, Status};
+use spring::plugin::service::Service;
+use {{project_name}}::greeter_server::{Greeter, GreeterServer};
+use {{project_name}}_service::{HelloReply, HelloRequest};
+
+pub mod {{project_name}} {
+    tonic::include_proto!("{{project_name}}_service");
+}
+
+#[derive(Clone, Service)]
+#[service(grpc = "GreeterServer")]
+struct MyGreeter;
+
+#[tonic::async_trait]
+impl Greeter for MyGreeter {
+    async fn say_hello(
+        &self,
+        request: Request<HelloRequest>,
+    ) -> Result<Response<HelloReply>, Status> {
+        println!("Got a request from {:?}", request.remote_addr());
+
+        let reply = HelloReply {
+            message: format!("Hello {}!", request.into_inner().name),
+        };
+        Ok(Response::new(reply))
+    }
+}
