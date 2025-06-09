@@ -38,7 +38,7 @@
 
 syntax = "proto3";
 
-package grpc.api.{{ project_name }};
+package {{ project_name | snake_case }};
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -56,30 +56,59 @@ enum {{ name | pascal_case }} {
 }
 {% endfor -%}
 
-message {{ message }}Repo {
-    message {{ message }} {
-        uint64 ID = 1;
-        google.protobuf.Timestamp createdAt = 2;
-        google.protobuf.Timestamp updatedAt = 3;
-        {% for name, property in entity.properties | items -%}
-        {{ macros.get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index + 3 }};
-        {% endfor -%}
-    }
-    repeated {{ message }} {{ message | plural | snake_case }} = 1;
+message {{ message }} {
+    uint64 ID = 1;
+    google.protobuf.Timestamp createdAt = 2;
+    google.protobuf.Timestamp updatedAt = 3;
+    {% for name, property in entity.properties | items -%}
+    {{ get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index + 3 }};
+    {% endfor %}
 }
 
-message {{ message }}UpdateRequest {
-    google.protobuf.Int64Value ID = 1;
-    {{ message }}Repo.{{ message }} {{ message | snake_case }} = 2;
+message Create{{ message }}Request {
+    {% for name, property in entity.properties | items -%}
+    {{ get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index }};
+    {% endfor %}
+}
+
+message Update{{ message }}Request {
+    uint64 ID = 1;
+    {% for name, property in entity.properties | items -%}
+    {{ get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index + 3 }};
+    {% endfor %}
+}
+
+message Get{{ message }}Request {
+  string id = 1;
+}
+
+message Delete{{ message }}Request {
+  string id = 1;
+}
+
+message List{{ message | plural}}Request {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message List{{ message | plural}}Response {
+  repeated {{ message }} {{ message | plural | snake_case }} = 1;
+  string next_page_token = 2;
+}
+
+
+message {{ message | plural }} {
+    repeated {{ message }} {{ message | plural | snake_case }} = 2;
 }
 
 service {{ message }}Service {
-	rpc Create({{ message }}Repo.{{ message }}) returns ({{ message }}Repo.{{ message }});
-    rpc GetList(google.protobuf.Empty) returns (stream {{ message }}Repo.{{ message }});
-    rpc GetOne(google.protobuf.Int64Value) returns ({{ message }}Repo.{{ message }});
-	rpc Update(UpdateRequest) returns ({{ message }}Repo.{{ message }});
-	rpc Delete(google.protobuf.Int64Value) returns (google.protobuf.BoolValue);
+  rpc Create{{ message }}(Create{{ message }}Request) returns ({{ message }});
+  rpc Get{{ message }}(Get{{ message }}Request) returns ({{ message }});
+  rpc Update{{ message }}(Update{{ message }}Request) returns ({{ message }});
+  rpc Delete{{ message }}(Delete{{ message }}Request) returns (google.protobuf.Empty);
+  rpc List{{ message | plural }}(List{{ message | plural }}Request) returns (List{{ message | plural }}Response);
+  rpc Stream{{ message | plural }}(List{{ message | plural }}Request) returns (stream {{ message }});
 }
----
+
 {% endif -%}
 {% endfor -%}
