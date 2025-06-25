@@ -1,0 +1,232 @@
+{# generate entities #}
+{% import "templates/macros.jinja" as macros %}
+{% for entity_name,entity in entities | items -%}
+{% if entity.properties | items %}
+{% set file_name = entity_name | snake_case -%}
+{% set schema_name = project_name | snake_case -%}
+
+pub mod {{ file_name }} {
+    {% set table_name = entity_name | table_case -%}
+    {% set module_name = file_name | pascal_case -%}
+    use sea_orm::entity::prelude::*;
+    use serde::{Serialize, Deserialize};
+    use sea_orm::sea_query::{Expr, Query, Func, Alias};
+    {% set m2m_relationships = entity.properties | items | selectattr('1.x-relationship', 'equalto', 'many-to-many') | map(attribute='0') -%}
+    {% if m2m_relationships | length > 0 -%}
+    use bon::bon;
+    use sea_orm::{JoinType, QuerySelect};
+    use sea_orm::ActiveValue::Set;
+    {% endif -%}
+    {{ macros.enum_imports(entity) }}
+    {{ macros.seaorm_prelude_imports(entity)|trim }}
+
+    {% for name,property in entity.properties | items | selectattr('1.enum') -%}
+    #[derive(PartialEq, Clone, Debug, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+    #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ name | snake_case }}")]
+    enum {{ name | pascal_case }}{
+            {% for enum in property.enum -%}
+            #[sea_orm(string_value = "{{ enum | snake_case }}")]
+            {{ enum }}{%- if not loop.last -%},{% endif -%}
+            {% endfor %}
+    }
+    {% endfor -%}
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+    #[sea_orm(schema_name="{{ schema_name }}", table_name = "{{ table_name }}")]
+    pub struct Model {
+        #[sea_orm(primary_key, column_type = "Uuid")]
+        pub id: Uuid,
+        pub created_at: DateTimeWithTimeZone,
+        pub updated_at: DateTimeWithTimeZone,
+        {% for name, property in entity.properties | items -%}
+        {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
+        #[sea_orm(ignore)]
+        {% endif -%}
+        pub {{ name | snake_case }}: {{ macros.get_type(name, property, name in entity.required) }}
+        {%- if not loop.last -%},{% endif %}
+        {% endfor %}
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+    {% for name,property in entity.properties | items -%}
+        {% set relation = macros.get_relation(property) | snake_case -%}
+        {% if relation != '' -%}
+        {% if macros.relation_is_many_to_one(property)=='true' -%}
+            #[sea_orm(belongs_to = "super::{{ relation }}::Entity",
+            from = "Column::{{ name | pascal_case }}",
+            to = "super::{{ relation }}::Column::Id")]
+        {% else -%}
+        #[sea_orm(has_many = "super::{{ relation }}::Entity")]
+        {% endif -%}
+        {% if macros.relation_is_many_to_many(property)=='true' -%}
+            {{ relation | pascal_case }},
+        {% else -%}
+            {{ name | pascal_case }},
+        {% endif -%}
+
+        {% endif -%}
+    {% endfor -%}
+    }
+
+    {% set ns = namespace(implemented_relations=[]) %}
+    {% for name,property in entity.properties | items -%}
+        {%- set relation = macros.get_relation(property) | snake_case -%}
+        {%- if relation!='' and relation not in implemented_relations -%}
+        {% set implemented_relations = ns.implemented_relations + [relation]  -%}
+        {% if macros.relation_is_many_to_many(property)=='true'-%}
+        {% set m2m_relation_model = macros.get_m2m_relation_model(entity_name,property) | snake_case -%}
+    impl Related<super::{{ relation }}::Entity> for Entity {
+        fn to() -> RelationDef {
+            super::{{ m2m_relation_model }}::Relation::{{ relation | pascal_case }}.def()
+        }
+
+        fn via() -> Option<RelationDef> {
+            Some(super::{{ m2m_relation_model }}::Relation::{{ entity_name | pascal_case }}.def().rev())
+        }
+    }
+            {% else -%}
+    impl Related<super::{{ relation | snake_case }}::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::{{ name | pascal_case }}.def()
+        }
+    }
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor %}
+
+
+    impl ActiveModelBehavior for ActiveModel {
+    }
+
+    {% if m2m_relationships | length > 0 -%}
+
+    #[bon]
+    impl Entity {
+        pub fn select_with_relations() -> Select<Entity> {
+            Entity::find()
+                .column(Column::Id)
+                .column(Column::CreatedAt)
+                .column(Column::UpdatedAt)
+
+                {% for name, property in entity.properties | items -%}
+                    {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
+                    {%- set relation = macros.get_relation(property) | snake_case -%}
+                    {% set m2m_relation_model = macros.get_m2m_relation_model(entity_name,property) | snake_case -%}
+
+    {#
+                    .join(JoinType::InnerJoin, Relation::{{ relation | pascal_case }}.def())
+                        .column_as(
+                            Expr::func(Func::coalesce(vec![
+                                Expr::func(Func::array_agg(super::{{ m2m_relation_model }}::Column::{{ entity_name | pascal_case }}Id))
+                                    .filter(Expr::col(super::{{ m2m_relation_model }}::Column::{{ entity_name | pascal_case }}Id).is_not_null())
+                                    .into(),
+                                Expr::val(Vec::<i32>::new()).into(),
+                            ])),
+                            Alias::new("{{ name }}"),
+                        )
+                    .left_join(super::{{ m2m_relation_model }}::Entity)
+
+    #}
+                    .group_by(Column::Id)
+                    {% else -%}
+                    .column(Column::{{ name | pascal_case }})
+                    {% endif -%}
+                {% endfor -%}
+        }
+
+        #[builder]
+        pub async fn insert_m2m<C>(db: &C, id:i32, {% for relation in m2m_relationships -%}{{ relation }}:Vec<i32>{{ ',' if not loop.last }}{% endfor -%}) -> Result<(), DbErr>
+        where
+            C: ConnectionTrait,
+        {
+            {% for name, property in  entity.properties | items | selectattr('1.x-relationship', 'equalto', 'many-to-many')  -%}
+            {% set m2m_relation_model = macros.get_m2m_relation_model(entity_name,property) | snake_case -%}
+            {%- set relation = macros.get_relation(property) -%}
+            if !{{ name }}.is_empty() {
+                super::{{ m2m_relation_model }}::Entity::delete_many()
+                    .filter(super::{{ m2m_relation_model }}::Column::{{ entity_name | pascal_case }}Id.eq(id))
+                    .filter(super::{{ m2m_relation_model }}::Column::{{ relation | pascal_case }}Id.is_not_in({{ name }}.clone()))
+                    .exec(db)
+                    .await?;
+
+                crate::models::{{ m2m_relation_model }}::Entity::insert_many(
+                    {{ name }}.clone().into_iter().map(|relation_id| crate::models::{{ m2m_relation_model }}::ActiveModel {
+                        {{ file_name }}_id: Set(id),
+                        {{ relation | snake_case }}_id: Set(relation_id),
+                    }).collect::<Vec<_>>()
+                ).exec(db).await?;
+            }
+            {% endfor -%}
+            Ok(())
+        }
+    }
+    {% endif -%}
+}
+{% endif -%}
+{% endfor -%}
+
+{# generate entities #}
+{% for relation in macros.get_m2m_relations(entities)|split(',')  -%}
+{% if relation|trim=='' -%}{% continue -%}{% endif -%}
+{% set left = relation | split("_") | first -%}
+{% set right = relation | split("_") | last -%}
+{% set file_name = relation | snake_case %}
+pub mod {{ file_name }} {
+    use sea_orm::entity::prelude::*;
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
+    #[sea_orm(schema_name="{{ schema_name }}", table_name = "{{ file_name }}")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub {{ left | snake_case }}_id: i32,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub {{ right | snake_case }}_id: i32,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::{{ left | snake_case }}::Entity",
+            from = "Column::{{ left | pascal_case }}Id",
+            to = "super::{{ left | snake_case }}::Column::Id",
+            on_update = "Cascade",
+            on_delete = "Cascade"
+        )]
+        {{ left | pascal_case }},
+        #[sea_orm(
+            belongs_to = "super::{{ right | snake_case }}::Entity",
+            from = "Column::{{ right | pascal_case }}Id",
+            to = "super::{{ right | snake_case }}::Column::Id",
+            on_update = "Cascade",
+            on_delete = "Cascade"
+        )]
+        {{ right | pascal_case }},
+    }
+
+    impl Related<super::{{ left | snake_case }}::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::{{ left | pascal_case }}.def()
+        }
+    }
+
+    impl Related<super::{{ right | snake_case }}::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::{{ right | pascal_case }}.def()
+        }
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelatedEntity)]
+    pub enum RelatedEntity {
+        #[sea_orm(entity = "super::{{ left | snake_case }}::Entity")]
+        {{ left | pascal_case }},
+        #[sea_orm(entity = "super::{{ right | snake_case }}::Entity")]
+        {{ right | pascal_case }},
+    }
+
+    impl ActiveModelBehavior for ActiveModel {
+    }
+
+}
+{% endfor -%}

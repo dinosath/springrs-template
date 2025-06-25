@@ -1,0 +1,43 @@
+{% import "templates/macros.jinja" as macros %}
+{%- macro get_sql_type(name, property, required) -%}{% filter trim -%}
+    {# Define a complex map for SQL types with type, format, min, and max #}
+    {%- set sql_map = [
+        {"type": "string", "format": "uuid", "result": "UUID"},
+        {"type": "string", "format": "date-time", "result": "TIMESTAMPTZ"},
+        {"type": "string", "format": "date", "result": "DATE"},
+        {"type": "string", "format": "time", "result": "TIME"},
+        {"type": "string", "format": "email", "result": "VARCHAR"},
+        {"type": "string", "format": "url", "result": "VARCHAR(1024) CHECK ("~name~" ~* '^https?://')" },
+        {"type": "string", "result": "VARCHAR"},
+        {"type": "string", "enum": property.enum, "result": name },
+        {"type": "boolean", "result": "BOOLEAN"},
+        {"type": "integer", "result": "INTEGER"},
+        {"type": "integer", "min": 0, "max": 255, "result": "TINYINT UNSIGNED"},
+        {"type": "integer", "min": 0, "max": 65535, "result": "SMALLINT UNSIGNED"},
+        {"type": "integer", "min": 0, "max": 4294967295, "result": "INT UNSIGNED"},
+        {"type": "integer", "min": 0, "max": None, "result": "BIGINT UNSIGNED"},
+        {"type": "integer", "min": None, "max": 127, "result": "TINYINT"},
+        {"type": "integer", "min": None, "max": 32767, "result": "SMALLINT"},
+        {"type": "integer", "min": None, "max": 2147483647, "result": "INT"},
+        {"type": "integer", "min": None, "max": None, "result": "BIGINT"},
+        {"type": "number", "min": -3.40282347, "max": 3.40282347, "result": "FLOAT"},
+        {"type": "number", "min": None, "max": None, "result": "DOUBLE"},
+        {"type": "relationship", "format": None, "result": "BIGINT UNSIGNED"},
+        {"type": "object", "x-relationship": "many-to-one", "result": "INTEGER"}
+    ] -%}
+    {%- set type = sql_map
+        | selectattr('type', 'equalto', property.type)
+        | selectattr('format', 'equalto', property.format)
+        | selectattr('min', 'equalto', property.min)
+        | selectattr('enum', 'equalto', property.enum)
+        | selectattr('max', 'equalto', property.max)
+        | selectattr('x-relationship', 'equalto', property['x-relationship'])
+        | map(attribute='result')
+        | first
+        | default('VARCHAR') -%}
+    {{ type }}{{' NOT NULL' if required }}
+{%- endfilter %}{%- endmacro -%}
+
+{%- macro get_reference(name, property) -%}{% filter trim -%}
+{{ ',FOREIGN KEY( ' ~ name ~' ) REFERENCES ' ~ values.application.name | default('app') ~'.'~ macros.get_relation(property) | plural | snake_case ~ '(id)' if macros.relation_is_many_to_one(property)=='true' }}
+{%- endfilter %}{%- endmacro -%}

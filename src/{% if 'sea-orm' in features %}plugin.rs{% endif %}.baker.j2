@@ -1,0 +1,43 @@
+use serde::Deserialize;
+use spring::async_trait;
+use spring::config::{ConfigRegistry, Configurable};
+use spring::plugin::ComponentRegistry;
+use spring::tracing::{error, info};
+use spring::{app::AppBuilder, plugin::Plugin};
+use spring_sea_orm::{DbConn, SeaOrmPlugin};
+use migration::{Migrator, MigratorTrait};
+pub struct SeaOrmMigrationPlugin;
+
+#[async_trait]
+impl Plugin for SeaOrmMigrationPlugin {
+    async fn build(&self, app: &mut AppBuilder) {
+        let Ok(SeaOrmMigrationConfig { migration_folder }) = app.get_config::<SeaOrmMigrationConfig>() else {
+            error!("SeaOrmMigrationPlugin require the migration_folder config");
+            return;
+        };
+
+        let pool = app.get_component::<DbConn>().expect("sqlx connect pool not exists");
+
+        let Ok(migration_path) = std::path::absolute(migration_folder) else {
+            error!("Folder not found");
+            return;
+        };
+
+        match Migrator::up(&pool, None).await {
+            Ok(_migrator) => {},
+            Err(e) => {
+                error!("SQLX Migration plugin load failed: {:?}", e);
+            }
+        }
+    }
+
+    fn dependencies(&self) -> Vec<&str> {
+        vec![std::any::type_name::<SeaOrmPlugin>()]
+    }
+}
+
+#[derive(Debug, Configurable, Deserialize)]
+#[config_prefix = "sqlx-migration"]
+pub struct SeaOrmMigrationConfig {
+    migration_folder: String,
+}

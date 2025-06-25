@@ -1,4 +1,4 @@
-{%- macro get_proto_type(name, property, required) -%}{% filter trim -%}
+{%- macro get_proto_type(name, property) -%}{% filter trim -%}
     {# Define a complex map for Protobuf types with type, format, min, and max #}
     {%- set proto_map = [
         {"type": "string", "format": "uuid", "result": "string"},
@@ -10,6 +10,7 @@
         {"type": "string", "result": "string"},
         {"type": "string", "enum": property.enum, "result": name|pascal_case},
         {"type": "boolean", "result": "bool"},
+        {"type": "integer", "result": "int32"},
         {"type": "integer", "min": 0, "max": 255, "result": "uint32"},
         {"type": "integer", "min": 0, "max": 65535, "result": "uint32"},
         {"type": "integer", "min": 0, "max": 4294967295, "result": "uint32"},
@@ -47,6 +48,7 @@ import "google/protobuf/wrappers.proto";
 {% for entity_name,entity in entities | items -%}
 {% if entity.properties | items %}
 {% set message = entity_name | pascal_case -%}
+{% set message_plural = entity_name | plural | pascal_case -%}
 
 {% for name,property in entity.properties | items | selectattr('1.enum') -%}
 enum {{ name | pascal_case }} {
@@ -57,24 +59,26 @@ enum {{ name | pascal_case }} {
 {% endfor -%}
 
 message {{ message }} {
-    uint64 ID = 1;
-    google.protobuf.Timestamp createdAt = 2;
-    google.protobuf.Timestamp updatedAt = 3;
+    string id = 1;
+    google.protobuf.Timestamp created_at = 2;
+    google.protobuf.Timestamp updated_at = 3;
     {% for name, property in entity.properties | items -%}
-    {{ get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index + 3 }};
+    {{'optional' if name not in entity.required}} {{ get_proto_type(name, property) }} {{ name | snake_case }} = {{ loop.index + 3 }};
     {% endfor %}
 }
 
 message Create{{ message }}Request {
     {% for name, property in entity.properties | items -%}
-    {{ get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index }};
+    {{'optional' if name not in entity.required}} {{ get_proto_type(name, property) }} {{ name | snake_case }} = {{ loop.index }};
     {% endfor %}
 }
 
 message Update{{ message }}Request {
-    uint64 ID = 1;
+    string id = 1;
+    google.protobuf.Timestamp created_at = 2;
+    google.protobuf.Timestamp updated_at = 3;
     {% for name, property in entity.properties | items -%}
-    {{ get_proto_type(name, property, name in entity.required) }} {{ name | pascal_case }} = {{ loop.index + 3 }};
+    {{'optional' if name not in entity.required}} {{ get_proto_type(name, property) }} {{ name | snake_case }} = {{ loop.index + 3 }};
     {% endfor %}
 }
 
@@ -86,19 +90,19 @@ message Delete{{ message }}Request {
   string id = 1;
 }
 
-message List{{ message | plural}}Request {
+message List{{ message_plural}}Request {
   int32 page_size = 1;
   string page_token = 2;
 }
 
-message List{{ message | plural}}Response {
-  repeated {{ message }} {{ message | plural | snake_case }} = 1;
+message List{{ message_plural}}Response {
+  repeated {{ message }} {{ message_plural | snake_case }} = 1;
   string next_page_token = 2;
 }
 
 
-message {{ message | plural }} {
-    repeated {{ message }} {{ message | plural | snake_case }} = 2;
+message {{ message_plural }} {
+    repeated {{ message }} {{ message_plural | snake_case }} = 2;
 }
 
 service {{ message }}Service {
@@ -106,8 +110,7 @@ service {{ message }}Service {
   rpc Get{{ message }}(Get{{ message }}Request) returns ({{ message }});
   rpc Update{{ message }}(Update{{ message }}Request) returns ({{ message }});
   rpc Delete{{ message }}(Delete{{ message }}Request) returns (google.protobuf.Empty);
-  rpc List{{ message | plural }}(List{{ message | plural }}Request) returns (List{{ message | plural }}Response);
-  rpc Stream{{ message | plural }}(List{{ message | plural }}Request) returns (stream {{ message }});
+  rpc List{{ message_plural }}(List{{ message_plural }}Request) returns (List{{ message_plural }}Response);
 }
 
 {% endif -%}

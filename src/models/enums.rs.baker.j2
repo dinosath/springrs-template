@@ -1,0 +1,19 @@
+{% import "templates/macros.jinja" as macros %}
+
+{% for entity_name,entity in entities | items -%}
+{% if not entity.enum %}{% continue %}{% endif %}
+
+{% set file_name = entity_name | snake_case -%}
+{% set module_name = file_name | pascal_case -%}
+use sea_orm::entity::prelude::*;
+use serde::{Serialize, Deserialize};
+
+#[derive(PartialEq, Clone, Debug, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ entity_name | snake_case }}")]
+pub enum {{ entity_name | pascal_case }}{
+        {% for value in entity.enum -%}
+        #[sea_orm(string_value = "{{ value | snake_case }}")]
+        {{ value | pascal_case }}{%- if not loop.last -%},{% endif -%}
+        {% endfor %}
+}
+{% endfor -%}

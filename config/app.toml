@@ -9,6 +9,9 @@ catch_panic = { enable = true }
 timeout_request = { enable = true, timeout = 30000 }
 static = { enable = true, uri = "/", path = "static", precompressed = true, fallback = "index.html" }
 
+[sqlx-migration]
+migration_folder = "./migrations"
+
 [sea-orm]
 uri = "${DATABASE_URL:postgres://postgres:postgres@localhost:5432}"
 min_connections = 1

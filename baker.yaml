@@ -1,4 +1,6 @@
 schemaVersion: v1
+template_globs:
+  - "**/*.jinja"
 
 questions:
   project_name:
@@ -37,6 +39,16 @@ questions:
   entities:
     type: json
     help: Configure your entities
+    schema: |
+        {
+          "type": "object",
+          "patternProperties": {
+            "^.+$": {
+              "$ref": "https://json-schema.org/draft/2020-12/schema"
+            }
+          },
+          "additionalProperties": false
+        }
     default: |
       {
         "user": {
@@ -65,12 +77,6 @@ questions:
                 },
                 "location": {
                     "type": "string"
-                },
-                "interests": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 }
             }
         }
