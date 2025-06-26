@@ -8,8 +8,8 @@ use plugin::SeaOrmMigrationPlugin;
 {{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in features }}
 
 mod service;
-mod models;
 {% if 'sea-orm' in features -%}
+mod models;
 mod plugin;
 {% endif -%}
 

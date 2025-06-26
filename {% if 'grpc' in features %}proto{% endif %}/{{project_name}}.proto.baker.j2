@@ -106,11 +106,11 @@ message {{ message_plural }} {
 }
 
 service {{ message }}Service {
-  rpc Create{{ message }}(Create{{ message }}Request) returns ({{ message }});
-  rpc Get{{ message }}(Get{{ message }}Request) returns ({{ message }});
-  rpc Update{{ message }}(Update{{ message }}Request) returns ({{ message }});
-  rpc Delete{{ message }}(Delete{{ message }}Request) returns (google.protobuf.Empty);
-  rpc List{{ message_plural }}(List{{ message_plural }}Request) returns (List{{ message_plural }}Response);
+  rpc Create(Create{{ message }}Request) returns ({{ message }});
+  rpc Get(Get{{ message }}Request) returns ({{ message }});
+  rpc Update(Update{{ message }}Request) returns ({{ message }});
+  rpc Delete(Delete{{ message }}Request) returns (google.protobuf.Empty);
+  rpc List(List{{ message_plural }}Request) returns (List{{ message_plural }}Response);
 }
 
 {% endif -%}

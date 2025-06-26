@@ -10,9 +10,9 @@ pub mod {{ file_name }} {
     {% set module_name = file_name | pascal_case -%}
     use sea_orm::entity::prelude::*;
     use serde::{Serialize, Deserialize};
-    use sea_orm::sea_query::{Expr, Query, Func, Alias};
     {% set m2m_relationships = entity.properties | items | selectattr('1.x-relationship', 'equalto', 'many-to-many') | map(attribute='0') -%}
     {% if m2m_relationships | length > 0 -%}
+    use sea_orm::sea_query::{Expr, Query, Func, Alias};
     use bon::bon;
     use sea_orm::{JoinType, QuerySelect};
     use sea_orm::ActiveValue::Set;
