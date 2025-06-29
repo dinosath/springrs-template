@@ -6,6 +6,8 @@ use plugin::SeaOrmMigrationPlugin;
 {% endif -%}
 {{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
 {{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in features }}
+use vite_rs_axum_0_8::ViteServe;
+use vite_rs::Embed;
 
 mod service;
 {% if 'sea-orm' in features -%}
@@ -13,9 +15,16 @@ mod models;
 mod plugin;
 {% endif -%}
 
+#[derive(vite_rs::Embed)]
+#[root = "frontend"]
+struct Assets;
+
 {{ '#[auto_config(WebConfigurator)]' if 'rest' in features -}}
 #[tokio::main]
 async fn main() {
+    #[cfg(debug_assertions)]
+    let _guard = Assets::start_dev_server(true);
+
     App::new()
         .opentelemetry_attrs([
             KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
@@ -25,8 +34,16 @@ async fn main() {
         .add_plugin(SeaOrmPlugin)
         .add_plugin(SeaOrmMigrationPlugin)
         {% endif -%}
+        .add_plugin(WebPlugin)
+        .add_router(router())
         {{ '.add_plugin(WebPlugin)' if 'rest' in features }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc' in features }}
         .run().await
+}
+
+fn router() -> Router {
+    Router::new()
+        .route_service("/", ViteServe::new(Assets::boxed()))
+        .route_service("/{*path}", ViteServe::new(Assets::boxed()))
 }
