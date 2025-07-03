@@ -32,9 +32,11 @@ prost = "0.13"
 tonic = "0.13"
 prost-types = "0.13"
 {% endif -%}
+{% if frontend_framework != 'none' %}
 vite-rs = "0.2.1"
 vite-rs-axum-0-8 = "0.2.1"
 spring-web = { version = "0.4",features = ["default","http2"] }
+{% endif %}
 tokio = { version = "1.44", features = ["full", "tracing"] }
 
 {% if 'grpc' in features -%}

@@ -5,9 +5,13 @@ use spring_sea_orm::{SeaOrmPlugin};
 use plugin::SeaOrmMigrationPlugin;
 {% endif -%}
 {{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
-{{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in features }}
+{% if frontend_framework != 'none' or 'rest' in features -%}
+use spring_web::{Router, WebConfigurator, WebPlugin};
+{% endif -%}
+{% if frontend_framework != 'none' %}
 use vite_rs_axum_0_8::ViteServe;
 use vite_rs::Embed;
+{% endif -%}
 
 mod service;
 {% if 'sea-orm' in features -%}
@@ -35,15 +39,19 @@ async fn main() {
         .add_plugin(SeaOrmMigrationPlugin)
         {% endif -%}
         .add_plugin(WebPlugin)
+        {% if frontend_framework != 'none' %}
         .add_router(router())
+        {% endif -%}
         {{ '.add_plugin(WebPlugin)' if 'rest' in features }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc' in features }}
         .run().await
 }
 
+{% if frontend_framework != 'none' %}
 fn router() -> Router {
     Router::new()
         .route_service("/", ViteServe::new(Assets::boxed()))
         .route_service("/{*path}", ViteServe::new(Assets::boxed()))
 }
+{% endif -%}

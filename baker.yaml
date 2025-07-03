@@ -22,6 +22,14 @@ questions:
     help: Please enter the edition of the project
     default: "2021"
 
+  frontend_framework:
+    type: str
+    help: What frontend framework do you want to use?
+    default: none
+    choices:
+      - none
+      - solid-js
+
   features:
     type: str
     help: What features do you want to enable?

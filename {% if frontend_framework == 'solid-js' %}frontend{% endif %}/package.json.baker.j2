@@ -1,9 +1,14 @@
 {
-  "name": "tanstack-solid-start-example-basic",
+  "name": "{{ project_name }}-frontend",
   "private": true,
   "sideEffects": false,
   "type": "module",
   "scripts": {
+    {% if 'grpc' in features -%}
+    "predev": "npm run proto",
+    "prebuild": "npm run proto",
+    "proto": "protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated/proto --proto_path ./proto grpc-crud.proto --ts_proto_opt=outputClientImpl=grpc-web",
+    {% endif -%}
     "dev": "vite dev",
     "build": "vite build && tsc --noEmit",
     "start": "vite start"
@@ -19,7 +24,10 @@
     "@tanstack/solid-table": "^8.21.3",
     "redaxios": "^0.5.1",
     "solid-js": "^1.9.5",
-    "tailwind-merge": "^2.6.0"
+    "tailwind-merge": "^2.6.0",
+    {% if 'grpc' in features -%}
+    "ts-proto": "^2.7.5"
+    {% endif -%}
   },
   "devDependencies": {
     "@types/node": "^22.5.4",
