@@ -11,7 +11,25 @@ import { DefaultCatchBoundary } from '~/components/DefaultCatchBoundary'
 import { NotFound } from '~/components/NotFound'
 import appCss from '~/styles/app.css?url'
 import { seo } from '~/utils/seo'
+import { routeTree } from '~/routeTree.gen'
 
+function getRoutes(tree) {
+  // If tree is an object with children, flatten recursively
+  const routes = []
+  function traverse(node) {
+    if (node.path) {
+      routes.push({
+        path: node.path,
+        label: node.label || node.path,
+      })
+    }
+    if (node.children) {
+      node.children.forEach(traverse)
+    }
+  }
+  traverse(tree)
+  return routes
+}
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -24,7 +42,7 @@ export const Route = createRootRoute({
       },
       ...seo({
         title:
-          'TanStack Start | Type-Safe, Client-First, Full-Stack React Framework',
+            'TanStack Start | Type-Safe, Client-First, Full-Stack React Framework',
         description: `TanStack Start is a type-safe, client-first, full-stack React framework. `,
       }),
     ],
@@ -56,66 +74,34 @@ export const Route = createRootRoute({
   shellComponent: RootDocument,
 })
 
+function NavLinks() {
+  const routes = getRoutes(routeTree)
+  return (
+      <div class="p-2 flex gap-2 text-lg">
+        {routes.map(route => (
+            <Link
+                to={route.path}
+                activeProps={{ class: 'font-bold' }}
+                activeOptions={{ exact: route.path === '/' }}
+            >
+              {route.label}
+            </Link>
+        ))}
+      </div>
+  )
+}
+
 function RootDocument({ children }: { children: Solid.JSX.Element }) {
   return (
-    <>
-      <HeadContent />
-      <div class="p-2 flex gap-2 text-lg">
-        <Link
-          to="/"
-          activeProps={{
-            class: 'font-bold',
-          }}
-          activeOptions={{ exact: true }}
-        >
-          Home
-        </Link>{' '}
-        <Link
-          to="/posts"
-          activeProps={{
-            class: 'font-bold',
-          }}
-        >
-          Posts
-        </Link>{' '}
-        <Link
-          to="/users"
-          activeProps={{
-            class: 'font-bold',
-          }}
-        >
-          Users
-        </Link>{' '}
-        <Link
-          to="/route-a"
-          activeProps={{
-            class: 'font-bold',
-          }}
-        >
-          Pathless Layout
-        </Link>{' '}
-        <Link
-          to="/deferred"
-          activeProps={{
-            class: 'font-bold',
-          }}
-        >
-          Deferred
-        </Link>{' '}
-        <Link
-          // @ts-expect-error
-          to="/this-route-does-not-exist"
-          activeProps={{
-            class: 'font-bold',
-          }}
-        >
-          This Route Does Not Exist
-        </Link>
-      </div>
-      <hr />
-      {children}
-      <TanStackRouterDevtools position="bottom-right" />
-      <Scripts />
-    </>
+      <>
+        <HeadContent />
+        <div class="p-2 flex gap-2 text-lg">
+          <NavLinks />
+        </div>
+        <hr />
+        {children}
+        <TanStackRouterDevtools position="bottom-right" />
+        <Scripts />
+      </>
   )
 }

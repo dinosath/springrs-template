@@ -14,6 +14,10 @@
     "start": "vite start"
   },
   "dependencies": {
+    {% if 'grpc' in features -%}
+    "@bufbuild/protobuf": "^2.6.0",
+    "@improbable-eng/grpc-web": "^0.15.0",
+    {% endif -%}
     "@tabler/icons": "^3.34.0",
     "@tailwindcss/vite": "^4.1.11",
     "@tanstack/solid-form": "^1.12.4",
@@ -26,6 +30,8 @@
     "solid-js": "^1.9.5",
     "tailwind-merge": "^2.6.0",
     {% if 'grpc' in features -%}
+    "browser-headers": "^0.4.1",
+    "google-protobuf": "^3.21.4",
     "ts-proto": "^2.7.5"
     {% endif -%}
   },

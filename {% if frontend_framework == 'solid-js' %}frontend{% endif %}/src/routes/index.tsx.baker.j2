@@ -1,0 +1,70 @@
+import { createFileRoute } from '@tanstack/solid-router'
+export const Route = createFileRoute('/')({
+  component: Home,
+})
+
+function Home() {
+  return (
+    <div class="p-2">
+      <h3>Welcome Home!!!</h3>
+    </div>
+  )
+}
+
+{% for entity_name,entity in entities | items -%}
+{% if entity.properties | items -%}
+{% set message = entity_name | pascal_case -%}
+{% set message_plural = entity_name | plural | pascal_case -%}
+{% set message_snake_plural = entity_name | plural | snake_case -%}
+{% set message_camel_plural = entity_name | plural | camel_case -%}
+
+import { {{message}}Api } from '~/api'
+const {{entity_name | snake_case}}Api = new {{message}}Api();
+
+export const {{message}}ListRoute = createFileRoute('/{{message_snake_plural}}')({
+  loader: async () => {
+    const result = await {{entity_name | snake_case}}Api.list({
+      pageSize: 0,
+      pageToken: ''
+    });
+    return Array.isArray(result) ? result : [];
+  },
+  component: {{message_plural}}Component,
+})
+
+function {{message_plural}}Component() {
+  const {{message_camel_plural}} = Route.useLoaderData()
+
+  return (
+    <div class="p-2 flex gap-2">
+      <ul class="list-disc pl-4">
+        {[...{{message_camel_plural}}, { id: 'i-do-not-exist', title: 'Non-existent Post@@' }].map(
+          (element) => {
+            return (
+              <li class="whitespace-nowrap">
+                <Link
+                  to="/{{message_snake_plural}}/$id"
+                  {% raw %}
+                  params={{
+                    id: element.id,
+                  }}
+                  class="block py-1 text-blue-800 hover:text-blue-600"
+                  activeProps={{ class: 'text-black font-bold' }}
+                  {% endraw %}
+                >
+                  <div>{element.name.substring(0, 20)}</div>
+                </Link>
+              </li>
+            )
+          },
+        )}
+      </ul>
+      <hr />
+      <Outlet />
+    </div>
+  )
+}
+
+
+{% endif -%}
+{% endfor -%}

@@ -1,0 +1,51 @@
+import pkg from '@improbable-eng/grpc-web';
+const {grpc} = pkg;
+import {
+{%- for entity_name,entity in entities | items -%}
+{% set message = entity_name | pascal_case -%}
+{% set message_plural = entity_name | plural | pascal_case -%}
+{% if entity.properties | items -%}
+Create{{ message }}Request, Delete{{ message }}Request, Get{{ message }}Request, List{{ message_plural }}Request, Update{{ message }}Request,  {{ message }}, {{ message }}ServiceClientImpl,
+{%- endif -%}
+{%- endfor -%} GrpcWebImpl } from "~/generated/proto/grpc-crud";
+
+const HOST = 'http://localhost:8081';
+
+{% for entity_name,entity in entities | items -%}
+{% if entity.properties | items -%}
+{% set message = entity_name | pascal_case -%}
+{% set message_plural = entity_name | plural | pascal_case -%}
+
+export class {{ message }}Api {
+  private rpc: GrpcWebImpl
+  private client: {{ message }}ServiceClientImpl
+
+  constructor() {
+    const metadata = new grpc.Metadata()
+    this.rpc = new GrpcWebImpl(HOST, { metadata })
+    this.client = new {{ message }}ServiceClientImpl(this.rpc)
+  }
+
+  async list(list{{ message_plural }}Request:List{{ message_plural }}Request): Promise<{{ message }}[]> {
+    return await this.client.List(list{{ message_plural }}Request).then(promise => promise.{{ entity_name | plural | camel_case }});
+  }
+
+  async get(get{{ message }}Request:Get{{ message }}Request): Promise<{{ message }}> {
+    return await this.client.Get(get{{ message }}Request);
+  }
+
+  async create(create{{ message }}Request: Create{{ message }}Request) {
+    await this.client.Create(create{{ message }}Request)
+  }
+
+  async delete(delete{{ message }}Request: Delete{{ message }}Request) {
+    await this.client.Delete(delete{{ message }}Request)
+  }
+
+  async update(update{{ message }}Request: Update{{ message }}Request) {
+    await this.client.Update(update{{ message }}Request)
+  }
+}
+
+{% endif -%}
+{% endfor -%}
