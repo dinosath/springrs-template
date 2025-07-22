@@ -1,4 +1,4 @@
-{% import "templates/macros.jinja" as macros %}
+{% import "macros.jinja" as macros %}
 {%- macro get_sql_type(name, property, required) -%}{% filter trim -%}
     {# Define a complex map for SQL types with type, format, min, and max #}
     {%- set sql_map = [

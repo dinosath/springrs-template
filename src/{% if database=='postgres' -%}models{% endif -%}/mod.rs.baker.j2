@@ -1,0 +1,9 @@
+pub mod enums;
+{% for entity_name,entity in entities | items | selectattr("1.properties")-%}
+pub mod {{ entity_name | snake_case }};
+{% endfor -%}
+{% import "macros.jinja" as macros -%}
+{% for relation in macros.get_m2m_relations(entities)|split(',')  -%}
+{% if relation|trim=='' -%}{% continue -%}{% endif -%}
+pub mod {{ relation | snake_case }};
+{% endfor -%}

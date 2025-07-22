@@ -1,8 +1,4 @@
-{% import "templates/macros.jinja" as macros %}
-
-{% for entity_name,entity in entities | items -%}
-{% if not entity.enum %}{% continue %}{% endif %}
-
+{% import "macros.jinja" as macros -%}
 {% set file_name = entity_name | snake_case -%}
 {% set module_name = file_name | pascal_case -%}
 use sea_orm::entity::prelude::*;
@@ -16,4 +12,3 @@ pub enum {{ entity_name | pascal_case }}{
         {{ value | pascal_case }}{%- if not loop.last -%},{% endif -%}
         {% endfor %}
 }
-{% endfor -%}

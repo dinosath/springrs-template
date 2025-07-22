@@ -1,6 +1,7 @@
 schemaVersion: v1
 template_globs:
   - "**/*.jinja"
+  - "*.jinja"
 
 questions:
   project_name:

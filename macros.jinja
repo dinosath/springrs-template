@@ -78,9 +78,9 @@
 
 {%- macro get_type(name, property, required=false) -%}
 {% filter trim %}
-    {%- set map = [ {"type": "string", "format": "uuid", "result": "uuid::Uuid"},
-            {"type": "string", "format": "date-time", "result": "DateTimeWithTimeZone"},
-            {"type": "string", "format": "date", "result": "TimeDate"},
+    {%- set map = [ {"type": "string", "format": "uuid", "result": "Uuid"},
+            {"type": "string", "format": "date-time", "result": "DateTime<Utc>"},
+            {"type": "string", "format": "date", "result": "NaiveDate"},
             {"type": "string", "format": "time", "result": "TimeTime"},
             {"type": "string", "format": "email", "result": "String"},
             {"type": "string", "format": "url", "result": "String"},
@@ -274,9 +274,7 @@
 {%- macro enum_imports(entity) -%}
 {%- for name,property in entity.properties | items -%}
     {%- if property['$ref'] and not property['x-relationship'] -%}
-        {%- set type = get_type(name,property) | snake_case-%}
-        {%- set type_pascal = type | pascal_case -%}
-        {{ "use crate::models::enums::" ~ type ~ "::{" ~ type_pascal ~ "};" }}
+        {{ "use crate::models::enums::" ~ name | snake_case ~ "::{" ~ name | pascal_case ~ "};" }}
     {%- endif -%}
 {%- endfor -%}
 {%- endmacro -%}
@@ -317,3 +315,18 @@ true
 {{ entity_name | plural | snake_case }}
 {% endfilter -%}
 {% endmacro -%}
+
+{%- macro chrono_imports(entity) -%}
+{%- set ns = namespace(chrono_types=['DateTime', 'Utc']) -%}
+{%- for name, property in entity.properties | items -%}
+    {%- if property.type == 'string' and property.format == 'date' and 'NaiveDate' not in ns.chrono_types -%}
+        {%- set ns.chrono_types = ns.chrono_types + ['NaiveDate'] -%}
+    {%- endif -%}
+    {%- if property.type == 'string' and property.format == 'time' and 'TimeTime' not in ns.chrono_types -%}
+        {%- set ns.chrono_types = ns.chrono_types + ['TimeTime'] -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- if ns.chrono_types | length > 0 -%}
+use chrono::{ {{ ns.chrono_types | join(', ') }} };
+{%- endif -%}
+{%- endmacro -%}

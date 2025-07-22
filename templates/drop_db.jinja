@@ -1,4 +1,4 @@
-{% import "templates/macros.jinja" as macros %}
+{% import "macros.jinja" as macros %}
 
 {%- macro get_reference(name, property) -%}{% filter trim -%}
 {{ ',FOREIGN KEY( ' ~ name ~' ) REFERENCES ' ~ values.application.name | default('app') ~'.'~ macros.get_relation(property) | plural | snake_case ~ '(id)' if macros.relation_is_many_to_one(property)=='true' }}

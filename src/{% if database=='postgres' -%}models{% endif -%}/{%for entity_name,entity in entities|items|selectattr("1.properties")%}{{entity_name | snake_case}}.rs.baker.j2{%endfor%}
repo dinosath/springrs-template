@@ -1,0 +1,94 @@
+{% import "macros.jinja" as macros %}
+{% set file_name = entity_name | snake_case -%}
+{% set schema_name = project_name | snake_case -%}
+
+{% set table_name = entity_name | table_case -%}
+{% set module_name = file_name | pascal_case -%}
+{{ macros.chrono_imports(entity) }}
+use crudcrate::{CRUDResource, EntityToModels};
+use sea_orm::entity::prelude::*;
+{% set m2m_relationships = entity.properties | items | selectattr('1.x-relationship', 'equalto', 'many-to-many') | map(attribute='0') -%}
+
+{% for name,property in entity.properties | items | selectattr('1.enum') -%}
+#[derive(PartialEq, Clone, Debug, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ name | snake_case }}")]
+enum {{ name | pascal_case }}{
+        {% for enum in property.enum -%}
+        #[sea_orm(string_value = "{{ enum | snake_case }}")]
+        {{ enum }}{%- if not loop.last -%},{% endif -%}
+        {% endfor %}
+}
+{% endfor -%}
+
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, EntityToModels)]
+#[sea_orm(schema_name="{{ schema_name }}", table_name = "{{ table_name }}")]
+#[crudcrate(description = "Manages a list of {{table_name}} items", generate_router)]
+pub struct Model {
+    #[sea_orm(primary_key, column_type = "Uuid", auto_increment = false)]
+    #[crudcrate(primary_key, sortable, create_model = false, update_model = false, on_create = Uuid::new_v4())]
+    pub id: Uuid,
+    #[crudcrate(sortable, create_model = false, update_model = false, on_create = chrono::Utc::now())]
+    pub created: DateTime<Utc>,
+    #[crudcrate(sortable, create_model = false, update_model = false, on_create = chrono::Utc::now(), on_update = chrono::Utc::now())]
+    pub last_updated: DateTime<Utc>,
+    {% for name, property in entity.properties | items -%}
+    {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
+    #[sea_orm(ignore)]
+    #[crudcrate(non_db_attr = true)]
+    {% endif -%}
+    pub {{ name | snake_case }}: {{ macros.get_type(name, property, name in entity.required) }}
+    {%- if not loop.last -%},{% endif %}
+    {% endfor %}
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {
+{% for name,property in entity.properties | items -%}
+    {% set relation = macros.get_relation(property) | snake_case -%}
+    {% if relation != '' -%}
+    {% if macros.relation_is_many_to_one(property)=='true' -%}
+        #[sea_orm(belongs_to = "super::{{ relation }}::Entity",
+        from = "Column::{{ name | pascal_case }}",
+        to = "super::{{ relation }}::Column::Id")]
+    {% else -%}
+    #[sea_orm(has_many = "super::{{ relation }}::Entity")]
+    {% endif -%}
+    {% if macros.relation_is_many_to_many(property)=='true' -%}
+        {{ relation | pascal_case }},
+    {% else -%}
+        {{ name | pascal_case }},
+    {% endif -%}
+
+    {% endif -%}
+{% endfor -%}
+}
+
+{% set ns = namespace(implemented_relations=[]) %}
+{% for name,property in entity.properties | items -%}
+    {%- set relation = macros.get_relation(property) | snake_case -%}
+    {%- if relation!='' and relation not in implemented_relations -%}
+    {% set implemented_relations = ns.implemented_relations + [relation]  -%}
+    {% if macros.relation_is_many_to_many(property)=='true'-%}
+    {% set m2m_relation_model = macros.get_m2m_relation_model(entity_name,property) | snake_case -%}
+impl Related<super::{{ relation }}::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::{{ m2m_relation_model }}::Relation::{{ relation | pascal_case }}.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::{{ m2m_relation_model }}::Relation::{{ entity_name | pascal_case }}.def().rev())
+    }
+}
+        {% else -%}
+impl Related<super::{{ relation | snake_case }}::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::{{ name | pascal_case }}.def()
+    }
+}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor %}
+
+
+impl ActiveModelBehavior for ActiveModel {
+}

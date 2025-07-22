@@ -4,7 +4,7 @@
   "sideEffects": false,
   "type": "module",
   "scripts": {
-    {% if 'grpc' in features -%}
+    {% if 'grpc'==protocol -%}
     "predev": "npm run proto",
     "prebuild": "npm run proto",
     "proto": "protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated/proto --proto_path ./proto grpc-crud.proto --ts_proto_opt=outputClientImpl=grpc-web",
@@ -14,7 +14,7 @@
     "start": "vite start"
   },
   "dependencies": {
-    {% if 'grpc' in features -%}
+    {% if 'grpc'==protocol -%}
     "@bufbuild/protobuf": "^2.6.0",
     "@improbable-eng/grpc-web": "^0.15.0",
     {% endif -%}
@@ -29,7 +29,7 @@
     "redaxios": "^0.5.1",
     "solid-js": "^1.9.5",
     "tailwind-merge": "^2.6.0",
-    {% if 'grpc' in features -%}
+    {% if 'grpc'==protocol -%}
     "browser-headers": "^0.4.1",
     "google-protobuf": "^3.21.4",
     "ts-proto": "^2.7.5"

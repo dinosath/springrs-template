@@ -1,0 +1,6 @@
+{% if 'rest'==protocol -%}
+{% for entity_name,entity in entities | items | selectattr("1.properties")-%}
+pub mod {{ entity_name | snake_case }};
+{% endfor -%}
+pub mod utils;
+{% endif -%}

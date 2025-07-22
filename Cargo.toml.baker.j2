@@ -12,21 +12,28 @@ debug = false
 panic = "abort"
 
 [dependencies]
+axum = { version = "0.8" }
 anyhow = "1.0"
+hyper = "1.6"
 serde = "1.0"
 serde_json = "1.0"
 spring = "0.4"
 {{ 'spring-opentelemetry = "0.4"' if 'open-telemetry' in features }}
-{% if 'sea-orm' in features -%}
+{% if database=='postgres' -%}
 spring-sea-orm = { version = "0.4", features = ["postgres","with-web",] }
 migration = { path = "migration" }
-sea-orm = { version = "1.1.4", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-uuid","with-chrono"] }
+sea-orm = { version = "1.1", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.13", features = ["v4", "serde","fast-rng"] }
+uuid = { version = "1.17", features = ["v4", "serde","fast-rng"] }
 bon = "3.3"
+crudcrate-derive = "0.2"
+crudcrate = "0.4"
+utoipa = { version = "5.4.0", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2.0"
+utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 {% endif -%}
 {{ 'spring-web = "0.4"' if 'rest' in features -}}
-{% if 'grpc' in features -%}
+{% if 'grpc'==protocol -%}
 spring-grpc = "0.4"
 prost = "0.13"
 tonic = "0.13"
@@ -37,9 +44,9 @@ vite-rs = "0.2.1"
 vite-rs-axum-0-8 = "0.2.1"
 spring-web = { version = "0.4",features = ["default","http2"] }
 {% endif %}
-tokio = { version = "1.44", features = ["full", "tracing"] }
+tokio = { version = "1.46", features = ["full", "tracing"] }
 
-{% if 'grpc' in features -%}
+{% if 'grpc'==protocol -%}
 [build-dependencies]
 tonic-build = "0.13"
 {% endif -%}

@@ -1,4 +1,4 @@
-{% if 'grpc' in features -%}
+{% if 'grpc'==protocol -%}
 pub mod {{project_name | snake_case }}_service;
 pub mod grpc_utils;
 {% endif -%}
