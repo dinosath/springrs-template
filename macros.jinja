@@ -67,7 +67,7 @@
         enumeration
     {%-elif property['x-relationship'] and property['$ref'] -%}
         unsigned
-    {%-else -%}
+    {%- else -%}
         string
     {%- endif -%}
     {%- if name not in required -%}
@@ -78,46 +78,74 @@
 
 {%- macro get_type(name, property, required=false) -%}
 {% filter trim %}
-    {%- set map = [ {"type": "string", "format": "uuid", "result": "Uuid"},
-            {"type": "string", "format": "date-time", "result": "DateTime<Utc>"},
-            {"type": "string", "format": "date", "result": "NaiveDate"},
-            {"type": "string", "format": "time", "result": "TimeTime"},
-            {"type": "string", "format": "email", "result": "String"},
-            {"type": "string", "format": "url", "result": "String"},
-            {"type": "string", "result": "String"},
-            {"type": "boolean", "result": "bool"},
-            {"type": "integer", "result": "i32"},
-            {"type": "integer", "min": 0, "max": 255, "result": "u8"},
-            {"type": "integer", "min": 0, "max": 65535, "result": "u16"},
-            {"type": "integer", "min": 0, "max": 4294967295, "result": "u32"},
-            {"type": "integer", "min": 0, "max": None, "result": "u64"},
-            {"type": "integer", "min": None, "max": 127, "result": "i8"},
-            {"type": "integer", "min": None, "max": 32767, "result": "i16"},
-            {"type": "integer", "min": None, "max": 2147483647, "result": "i32"},
-            {"type": "integer", "min": None, "max": None, "result": "i64"},
-            {"type": "number", "min": -3.40282347, "max": 3.40282347, "result": "f32"},
-            {"type": "number", "min": None, "max": None, "result": "f64"},
-            {"type": "enum", "format": None, "result": name | pascal_case },
-            {"x-relationship": "many-to-one", "result": "i32" },
-            {"x-relationship": "one-to-many", "result": "Vec<i32>" },
-            {"x-relationship": "many-to-many", "result": "Vec<i32>" }
-            ] -%}
-    {%- set type = 'None' -%}
-    {%- for entry in map -%}
-            {% set condition = property.type == entry.type and entry.format == property.format
-                                           and (min not in entry or (property.minimum or property.exclusiveMinimum) >= entry.min)
-                                           and (max not in entry or (property.maximum or property.exclusiveMaximum) <= entry.max)
-                                           or ('x-relationship' in property and entry['x-relationship'] == property['x-relationship'])
-                                           -%}
-
-            {%- if condition -%}
-
-                {%- set type = entry.result -%}
-                {%- if not required %}{%- set type = 'Option<' ~ type ~ '>' -%}{%- endif -%}
-                {{ type }}
-                {%- break -%}
+    {# Improved type mapping for Rust types #}
+    {%- set type = None -%}
+    {%- if property['x-relationship'] == 'many-to-one' -%}
+        {%- set type = 'i32' -%}
+    {%- elif property['x-relationship'] == 'one-to-many' -%}
+        {%- set type = 'Vec<i32>' -%}
+    {%- elif property['x-relationship'] == 'many-to-many' -%}
+        {%- set type = 'Vec<i32>' -%}
+    {%- elif property.enum is defined and property.enum|length > 0 -%}
+        {%- set type = name | pascal_case -%}
+    {%- elif property.type == 'string' -%}
+        {%- if property.format == 'uuid' -%}
+            {%- set type = 'Uuid' -%}
+        {%- elif property.format == 'date-time' -%}
+            {%- set type = 'DateTime<Utc>' -%}
+        {%- elif property.format == 'date' -%}
+            {%- set type = 'NaiveDate' -%}
+        {%- elif property.format == 'time' -%}
+            {%- set type = 'TimeTime' -%}
+        {%- elif property.format in ['email', 'url'] -%}
+            {%- set type = 'String' -%}
+        {%- else -%}
+            {%- set type = 'String' -%}
+        {%- endif -%}
+    {%- elif property.type == 'boolean' -%}
+        {%- set type = 'bool' -%}
+    {%- elif property.type == 'integer' -%}
+        {%- set min = property.minimum if property.minimum is defined else property.exclusiveMinimum if property.exclusiveMinimum is defined else None -%}
+        {%- set max = property.maximum if property.maximum is defined else property.exclusiveMaximum if property.exclusiveMaximum is defined else None -%}
+        {%- if min is not none and min >= 0 -%}
+            {%- if max is not none and max <= 255 -%}
+                {%- set type = 'u8' -%}
+            {%- elif max is not none and max <= 65535 -%}
+                {%- set type = 'u16' -%}
+            {%- elif max is not none and max <= 4294967295 -%}
+                {%- set type = 'u32' -%}
+            {%- else -%}
+                {%- set type = 'u64' -%}
             {%- endif -%}
-    {%- endfor -%}
+        {%- else -%}
+            {%- if max is not none and max <= 127 -%}
+                {%- set type = 'i8' -%}
+            {%- elif max is not none and max <= 32767 -%}
+                {%- set type = 'i16' -%}
+            {%- elif max is not none and max <= 2147483647 -%}
+                {%- set type = 'i32' -%}
+            {%- else -%}
+                {%- set type = 'i64' -%}
+            {%- endif -%}
+        {%- endif -%}
+    {%- elif property.type == 'number' -%}
+        {%- set min = property.minimum if property.minimum is defined else property.exclusiveMinimum if property.exclusiveMinimum is defined else None -%}
+        {%- set max = property.maximum if property.maximum is defined else property.exclusiveMaximum if property.exclusiveMaximum is defined else None -%}
+        {%- if min is not none and min >= -3.40282347 and max is not none and max <= 3.40282347 -%}
+            {%- set type = 'f32' -%}
+        {%- else -%}
+            {%- set type = 'f64' -%}
+        {%- endif -%}
+    {%- elif property['$ref'] is defined and property['x-relationship'] is not defined -%}
+        {%- set type = name | pascal_case -%}
+    {%- else -%}
+        {%- set type = 'String' -%}
+    {%- endif -%}
+    {%- if not required and type is not none and 'Vec<' in type -%}
+        Option<{{ type }}>
+    {%- else -%}
+        {{ type }}
+    {%- endif -%}
 {% endfilter %}
 {%- endmacro -%}
 
@@ -330,3 +358,102 @@ true
 use chrono::{ {{ ns.chrono_types | join(', ') }} };
 {%- endif -%}
 {%- endmacro -%}
+
+{#-
+    Macro: rust_var(name)
+
+    Purpose:
+        Transforms an arbitrary string into a valid Rust variable name.
+
+    Rules applied:
+        1. Converts the string to lowercase.
+        2. Replaces spaces and most punctuation with underscores ("_").
+        3. Collapses consecutive underscores into a single underscore.
+        4. Trims leading and trailing underscores.
+        5. If the result is empty, it becomes "_".
+        6. If the name starts with a digit, prefixes an underscore ("_").
+        7. If the name is a reserved Rust keyword, prefixes an underscore ("_").
+
+    Rust keywords handled:
+        as, break, const, continue, crate, else, enum, extern, false, fn, for, if,
+        impl, in, let, loop, match, mod, move, mut, pub, ref, return, self, Self,
+        static, struct, super, trait, true, type, unsafe, use, where, while,
+        async, await, dyn
+
+    Examples:
+        {{ rust_var("9:16") }}        → "_9_16"
+        {{ rust_var("fn") }}          → "_fn"
+        {{ rust_var("let") }}         → "_let"
+        {{ rust_var("Hello.World") }} → "hello_world"
+        {{ rust_var("Rust@2025!") }}  → "rust_2025_"
+-#}
+{% macro rust_var(name) -%}
+    {%- set var = (name|string) | lower -%}
+
+    {# Replace common non-identifier chars with "_" #}
+    {%- set var = var
+        | replace(" ", "_")
+        | replace("-", "_")
+        | replace(":", "_")
+        | replace("/", "_")
+        | replace("\\", "_")
+        | replace(".", "_")
+        | replace(",", "_")
+        | replace(";", "_")
+        | replace("+", "_")
+        | replace("*", "_")
+        | replace("@", "_")
+        | replace("#", "_")
+        | replace("$", "_")
+        | replace("%", "_")
+        | replace("^", "_")
+        | replace("&", "_")
+        | replace("(", "_")
+        | replace(")", "_")
+        | replace("[", "_")
+        | replace("]", "_")
+        | replace("{", "_")
+        | replace("}", "_")
+        | replace("|", "_")
+        | replace("?", "_")
+        | replace("!", "_")
+        | replace("'", "_")
+        | replace('"', "_")
+        | replace("<", "_")
+        | replace(">", "_")
+        | replace("~", "_")
+        | replace("`", "_")
+    -%}
+
+    {# Collapse multiple underscores #}
+    {%- for _ in range(6) -%}
+        {%- set var = var | replace("__", "_") -%}
+    {%- endfor -%}
+
+    {# Trim leading/trailing "_" #}
+    {%- set var = var | trim("_") -%}
+
+    {# Fallback if empty #}
+    {%- if var == "" -%}
+        {%- set var = "_" -%}
+    {%- endif -%}
+
+    {# If first char is a digit, prefix "_" #}
+    {%- if var and (var[0] in "0123456789") -%}
+        {%- set var = "_" ~ var -%}
+    {%- endif -%}
+
+    {# Reserved Rust keywords #}
+    {%- set keywords = [
+        "as","break","const","continue","crate","else","enum","extern","false","fn",
+        "for","if","impl","in","let","loop","match","mod","move","mut","pub","ref",
+        "return","self","self","static","struct","super","trait","true","type",
+        "unsafe","use","where","while","async","await","dyn"
+    ] -%}
+
+    {%- if var in keywords -%}
+        {%- set var = "_" ~ var -%}
+    {%- endif -%}
+
+    {{- var -}}
+{%- endmacro %}

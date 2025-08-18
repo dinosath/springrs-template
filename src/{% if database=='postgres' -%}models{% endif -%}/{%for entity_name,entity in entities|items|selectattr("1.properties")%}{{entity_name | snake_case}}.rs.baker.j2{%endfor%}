@@ -10,12 +10,12 @@ use sea_orm::entity::prelude::*;
 {% set m2m_relationships = entity.properties | items | selectattr('1.x-relationship', 'equalto', 'many-to-many') | map(attribute='0') -%}
 
 {% for name,property in entity.properties | items | selectattr('1.enum') -%}
-#[derive(PartialEq, Clone, Debug, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[derive(PartialEq, Clone, Debug, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, ToSchema)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ name | snake_case }}")]
 enum {{ name | pascal_case }}{
         {% for enum in property.enum -%}
         #[sea_orm(string_value = "{{ enum | snake_case }}")]
-        {{ enum }}{%- if not loop.last -%},{% endif -%}
+        {{ macros.rust_var(enum) }}{%- if not loop.last -%},{% endif -%}
         {% endfor %}
 }
 {% endfor -%}
@@ -36,7 +36,7 @@ pub struct Model {
     #[sea_orm(ignore)]
     #[crudcrate(non_db_attr = true)]
     {% endif -%}
-    pub {{ name | snake_case }}: {{ macros.get_type(name, property, name in entity.required) }}
+    pub {{ macros.rust_var(name) }}: {{ macros.get_type(name, property, name in entity.required) }}
     {%- if not loop.last -%},{% endif %}
     {% endfor %}
 }

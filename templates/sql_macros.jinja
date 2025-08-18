@@ -41,3 +41,9 @@
 {%- macro get_reference(name, property) -%}{% filter trim -%}
 {{ ',FOREIGN KEY( ' ~ name ~' ) REFERENCES ' ~ values.application.name | default('app') ~'.'~ macros.get_relation(property) | plural | snake_case ~ '(id)' if macros.relation_is_many_to_one(property)=='true' }}
 {%- endfilter %}{%- endmacro -%}
+
+{% macro add_foreign_key(name, property, schema_name) -%}
+{% if property['x-relationship'] and property['x-relationship'].type == 'many-to-one' -%}
+    {{ name | snake_case }} UUID, FOREIGN KEY( {{ name | snake_case }} ) REFERENCES {{ schema_name }}.{{ property['x-relationship'].target | plural | snake_case }}(id)
+{% endif -%}
+{% endmacro -%}

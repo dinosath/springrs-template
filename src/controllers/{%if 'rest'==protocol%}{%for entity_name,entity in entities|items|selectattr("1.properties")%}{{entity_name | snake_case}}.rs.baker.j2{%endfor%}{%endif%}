@@ -14,39 +14,6 @@ use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, S
 use crate::models::{{ file_name }}::{ActiveModel, Entity, Model, get_all_handler, get_one_handler, create_one_handler, update_one_handler, delete_one_handler, {{model}}, {{model}}Create, {{model}}Update};
 use super::utils::{ListParams};
 
-{% if macros.has_one_to_many_relation(entity) or macros.has_many_to_many_relation(entity) -%}
-#[derive(Clone, Debug, Serialize, Deserialize, FromQueryResult)]
-pub struct ResponseModel {
-    pub id: Uuid,
-    pub created_at: DateTimeWithTimeZone,
-    pub updated_at: DateTimeWithTimeZone,
-    {% for name, property in entity.properties | items -%}
-    {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
-    pub {{ name | snake_case }}: {{ macros.get_type(name, property, name in entity.required) }} {{ ',' if not loop.last }}
-    {% endfor %}
-}
-{% endif -%}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Params {
-    {% for name, property in entity.properties | items -%}
-    {%- if property.readOnly-%}{% continue -%}{%- endif -%}
-    pub {{ name | snake_case }}: {{ macros.get_type(name, property, name in entity.required) }} {{ ',' if not loop.last }}
-    {% endfor %}
-}
-
-impl Params {
-    fn update(&self, item: &mut ActiveModel) {
-      {% for name, property in entity.properties | items -%}
-        {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' -%}{% continue -%}
-        {%- else -%}
-      item.{{ name | snake_case }} = Set(self.{{ name | snake_case }}.clone());
-        {% endif -%}
-      {%- endfor -%}
-    }
-}
-
 {% set m2m_relationships = entity.properties | items | selectattr('1.x-relationship', 'equalto', 'many-to-many') | map(attribute='0') -%}
 
 async fn load_item<C>(db: &C, id: Uuid) -> Result<Model>

@@ -3,6 +3,8 @@ template_globs:
   - "**/*.jinja"
   - "*.jinja"
 
+post_hook_filename: "{{platform.family}}/post"
+
 questions:
   project_name:
     type: str
@@ -30,7 +32,14 @@ questions:
     choices:
       - none
       - solid-js
+      - react-admin
 
+  database:
+    type: str
+    help: What database do you want to use?
+    default: postgres
+    choices:
+      - postgres
   features:
     type: str
     help: What features do you want to enable?

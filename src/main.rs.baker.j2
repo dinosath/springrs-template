@@ -1,6 +1,6 @@
 {{ 'use spring_grpc::GrpcPlugin;' if 'grpc'==protocol }}
 {{ 'use spring::{auto_config, App};' if 'rest' in features else 'use spring::App;' }}
-{% if 'sea-orm' in features -%}
+{% if database=='postgres' -%}
 use spring_sea_orm::{SeaOrmPlugin};
 use plugin::SeaOrmMigrationPlugin;
 {% endif -%}
@@ -37,7 +37,7 @@ async fn main() {
             KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
             KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
         ])
-        {% if 'sea-orm' in features -%}
+        {% if database=='postgres' -%}
         .add_plugin(SeaOrmPlugin)
         .add_plugin(SeaOrmMigrationPlugin)
         {% endif -%}

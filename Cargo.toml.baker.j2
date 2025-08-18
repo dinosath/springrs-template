@@ -32,7 +32,7 @@ utoipa = { version = "5.4.0", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-axum = "0.2.0"
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 {% endif -%}
-{{ 'spring-web = "0.4"' if 'rest' in features -}}
+{{ 'spring-web = "0.4"' if 'rest'==protocol -}}
 {% if 'grpc'==protocol -%}
 spring-grpc = "0.4"
 prost = "0.13"

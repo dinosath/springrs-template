@@ -9,6 +9,6 @@ use serde::{Serialize, Deserialize};
 pub enum {{ entity_name | pascal_case }}{
         {% for value in entity.enum -%}
         #[sea_orm(string_value = "{{ value | snake_case }}")]
-        {{ value | pascal_case }}{%- if not loop.last -%},{% endif -%}
+        {{ macros.rust_var(value) }}{%- if not loop.last -%},{% endif -%}
         {% endfor %}
 }
