@@ -423,6 +423,7 @@ use chrono::{ {{ ns.chrono_types | join(', ') }} };
         | replace(">", "_")
         | replace("~", "_")
         | replace("`", "_")
+        | snake_case
     -%}
 
     {# Collapse multiple underscores #}
