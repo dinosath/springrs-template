@@ -387,8 +387,8 @@ use chrono::{ {{ ns.chrono_types | join(', ') }} };
         {{ rust_var("Hello.World") }} → "hello_world"
         {{ rust_var("Rust@2025!") }}  → "rust_2025_"
 -#}
-{% macro rust_var(name) -%}
-    {%- set var = (name|string) | lower -%}
+{% macro rust_var(name,enum=false) -%}
+    {%- set var = name|string-%}
 
     {# Replace common non-identifier chars with "_" #}
     {%- set var = var
@@ -423,8 +423,13 @@ use chrono::{ {{ ns.chrono_types | join(', ') }} };
         | replace(">", "_")
         | replace("~", "_")
         | replace("`", "_")
-        | snake_case
     -%}
+
+    {%- if enum -%}
+        {%- set var = var | pascal_case -%}
+    {%- else -%}
+        {%- set var = var | snake_case -%}
+    {%- endif -%}
 
     {# Collapse multiple underscores #}
     {%- for _ in range(6) -%}

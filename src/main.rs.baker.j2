@@ -1,11 +1,13 @@
 {{ 'use spring_grpc::GrpcPlugin;' if 'grpc'==protocol }}
-{{ 'use spring::{auto_config, App};' if 'rest' in features else 'use spring::App;' }}
+{{ 'use spring::{auto_config, App};' if protocol=='rest' else 'use spring::App;' }}
 {% if database=='postgres' -%}
 use spring_sea_orm::{SeaOrmPlugin};
 use plugin::SeaOrmMigrationPlugin;
 {% endif -%}
 {{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
-{% if frontend_framework != 'none' or 'rest' in features -%}
+{% if frontend_framework != 'none' or protocol=='rest'-%}
+use sea_orm::{Database, DatabaseConnection};
+use std::env;
 use spring_web::{Router, WebConfigurator, WebPlugin};
 {% endif -%}
 {% if frontend_framework != 'none' %}
@@ -19,18 +21,38 @@ mod models;
 mod plugin;
 {% endif -%}
 {% if protocol=='rest' -%}
-mod controllers;
+//mod controllers;
 {% endif -%}
 
 #[derive(vite_rs::Embed)]
 #[root = "frontend"]
 struct Assets;
 
-{{ '#[auto_config(WebConfigurator)]' if 'rest' in features -}}
+#[derive(OpenApi)]
+#[openapi()]
+struct ApiDoc;
+
+use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_scalar::{Scalar, Servable};
+
+{{ '#[auto_config(WebConfigurator)]' if protocol=='rest' }}
 #[tokio::main]
-async fn main() {
-    #[cfg(debug_assertions)]
-    let _guard = Assets::start_dev_server(true);
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    //#[cfg(debug_assertions)]
+    //let _guard = Assets::start_dev_server(true);
+
+    {% if protocol=='rest'-%}
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite::memory:".to_string());
+    let db: DatabaseConnection = Database::connect(&database_url).await?;
+
+    let (router, apidocs) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+        {% for entity_name,entity in entities | items -%}
+        .merge(models::{{entity_name | snake_case}}::router_with_path(&db, "/{{entity_name | snake_case}}"))
+        {% endfor -%}
+        .split_for_parts();
+    let app_router = router.merge(Scalar::with_url("/docs", apidocs));
+    {% endif -%}
 
     App::new()
         .opentelemetry_attrs([
@@ -41,16 +63,19 @@ async fn main() {
         .add_plugin(SeaOrmPlugin)
         .add_plugin(SeaOrmMigrationPlugin)
         {% endif -%}
+        {% if protocol=='rest'-%}
         .add_plugin(WebPlugin)
+        .add_router(app_router)
+        {% endif -%}
         {% if frontend_framework != 'none' %}
-        .add_router(router())
+        //.add_router(router())
         {% endif -%}
         {{ '.add_plugin(WebPlugin)' if 'rest' in features }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc'==protocol }}
-        .run().await
+        .run().await;
+    Ok(())
 }
-
 {% if frontend_framework != 'none' %}
 fn router() -> Router {
     Router::new()

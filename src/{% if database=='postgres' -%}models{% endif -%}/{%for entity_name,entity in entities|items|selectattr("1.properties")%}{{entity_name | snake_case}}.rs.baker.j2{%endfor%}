@@ -15,7 +15,7 @@ use sea_orm::entity::prelude::*;
 enum {{ name | pascal_case }}{
         {% for enum in property.enum -%}
         #[sea_orm(string_value = "{{ enum | snake_case }}")]
-        {{ macros.rust_var(enum) }}{%- if not loop.last -%},{% endif -%}
+        {{ macros.rust_var(enum,true) }}{%- if not loop.last -%},{% endif -%}
         {% endfor %}
 }
 {% endfor -%}
@@ -36,7 +36,7 @@ pub struct Model {
     #[sea_orm(ignore)]
     #[crudcrate(non_db_attr = true)]
     {% endif -%}
-    pub {{ macros.rust_var(name) }}: {{ macros.get_type(name, property, name in entity.required) }}
+    pub {{ macros.rust_var(name,false) }}: {{ macros.get_type(name, property, name in entity.required) }}
     {%- if not loop.last -%},{% endif %}
     {% endfor %}
 }
