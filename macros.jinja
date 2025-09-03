@@ -17,11 +17,13 @@
         {%- if property.format and property.format == "uuid" -%}
             uuid
         {%- elif property.format and property.format == "date-time" -%}
-            timestamptz
+            timestamp_with_time_zone
         {%- elif property.format and property.format == "date" -%}
             date_time
         {%- elif property.format and property.format == "time" -%}
             time
+        {%-elif property.enum %}
+            enumeration
         {%- else -%}
             string
         {%- endif -%}    
@@ -315,7 +317,7 @@
 
 {% macro get_m21_relations_type(entity) -%}
 {% set ns = namespace(relations=[]) %}
-{% if entity.properties | items  -%}
+{% if entity and entity.properties | items  -%}
 {% for name, property in entity.properties | items  -%}
 {% if relation_is_many_to_one(property=property) -%}
 {% set relation = get_relation(property) -%}

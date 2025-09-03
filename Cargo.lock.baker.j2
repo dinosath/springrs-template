@@ -488,31 +488,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bon"
-version = "3.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f61138465baf186c63e8d9b6b613b508cd832cba4ce93cf37ce5f096f91ac1a6"
-dependencies = [
- "bon-macros",
- "rustversion",
-]
-
-[[package]]
-name = "bon-macros"
-version = "3.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40d1dad34aa19bf02295382f08d9bc40651585bd497266831d40ee6296fb49ca"
-dependencies = [
- "darling",
- "ident_case",
- "prettyplease",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.104",
-]
-
-[[package]]
 name = "borsh"
 version = "1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -800,9 +775,9 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crudcrate"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65f3eb2001eac2fee12f9a7c016e6c6b43b150906569c8bd9c4e40ce4d74016"
+checksum = "478b411b85ac69b84e0f839a01b959ed296ac19b4a241a9eb5a4e291e8c5bdae"
 dependencies = [
  "async-trait",
  "axum",
@@ -818,9 +793,9 @@ dependencies = [
 
 [[package]]
 name = "crudcrate-derive"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e93cd35baa11ba830b828ff74fc2431e3e82dc89068619f4d2bb829fa995a72"
+checksum = "299b056874dc68585facc59a0c591deae3156b9408584ab3ea5ec63e10d8831f"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -967,34 +942,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "{{ project_name }}"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bon",
- "chrono",
- "crudcrate",
- "crudcrate-derive",
- "hyper",
- "migration",
- "sea-orm",
- "serde",
- "serde_json",
- "spring",
- "spring-opentelemetry",
- "spring-sea-orm",
- "spring-web",
- "tokio",
- "utoipa",
- "utoipa-axum",
- "utoipa-scalar",
- "uuid",
- "vite-rs",
- "vite-rs-axum-0-8",
-]
 
 [[package]]
 name = "errno"
@@ -1789,6 +1736,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -2391,16 +2339,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
-]
-
-[[package]]
-name = "prettyplease"
-version = "0.2.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dee91521343f4c5c6a63edd65e54f31f5c92fe8978c40a4282f8372194c6a7d"
-dependencies = [
- "proc-macro2",
- "syn 2.0.104",
 ]
 
 [[package]]
@@ -3147,9 +3085,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.140"
+version = "1.0.143"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
+checksum = "d401abef1d108fbd9cbaebc3e46611f4b1021f714a0597a71f41ee463f5f4a5a"
 dependencies = [
  "itoa",
  "memchr",
@@ -4201,6 +4139,33 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "{{project_name}}"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "crudcrate",
+ "crudcrate-derive",
+ "hyper",
+ "migration",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "spring",
+ "spring-opentelemetry",
+ "spring-sea-orm",
+ "spring-web",
+ "tokio",
+ "utoipa",
+ "utoipa-axum",
+ "utoipa-scalar",
+ "uuid",
+ "vite-rs",
+ "vite-rs-axum-0-8",
 ]
 
 [[package]]

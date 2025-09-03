@@ -1,25 +1,21 @@
 {# generate controllers #}
-{% import "macros.jinja" as macros %}
-
-{% for entity_name,entity in entities | items -%}
-use loco_rs::schema::{table_auto_tz,timestamptz,timestamptz_null};
+{% import "macros.jinja" as macros -%}
 use sea_orm_migration::{prelude::*, schema::*};
-{% if entity.enum %}
-use sea_orm_migration::sea_orm::{DbBackend, Statement};
-use sea_orm_migration::prelude::sea_query::extension::postgres::Type;
-{% endif %}
-
+use sea_orm::{EnumIter, Iterable};
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-{% if entity.properties -%}
+        {% for entity_name,entity in entities | items -%}
         manager
+            {% set enum_name = entity_name | pascal_case -%}
+            {% if entity.properties -%}
             .create_table(
-                table_auto_tz({{ enum_name }}::Table)
-                .if_not_exists()
+                Table::create()
+                    .table({{ enum_name }}::Table)
+                    .if_not_exists()
                     .col(pk_auto({{ enum_name }}::Id))
                     {% for name, property in entity.properties | items -%}
                     {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{% endif -%}
@@ -28,7 +24,7 @@ impl MigrationTrait for Migration {
                     .col(unsigned_null({{ enum_name }}::{{ name | pascal_case }}{% if macros.m21_relation_equal_name(name=name,property=property)=='true' -%}Id{% endif -%}))
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk-{{ enum_name | snake_case }}-{{ name | snake_case }}{% if macros.m21_relation_equal_name(name=name,property=property)=='true' -%}_id{% endif -%}")
+                            .name("{{ name | foreign_key }}")
                             .from({{ enum_name }}::Table, {{ enum_name }}::{{ name | pascal_case }}{% if macros.m21_relation_equal_name(name=name,property=property)=='true' -%}Id{% endif -%})
                             .to({{ relation | pascal_case }}::Table, {{ relation | pascal_case }}::Id)
                             .on_delete(ForeignKeyAction::Cascade)
@@ -36,65 +32,44 @@ impl MigrationTrait for Migration {
                     )
                     {% else -%}
                     .col({{ macros.get_migration_type(name=name,property=property,required=entity.required) }}({{ enum_name }}::{{ name | pascal_case }}
-                    {%- if property.enum -%}
-                    ,Alias::new("{{ name | snake_case }}"),{{ name | pascal_case }}::iter()
+                    {% if property.enum -%}
+                    ,Alias::new("{{ name | snake_case }}"),{{ entity_name | pascal_case ~ name | pascal_case }}::iter()
                     {%- endif -%}
                     ))
-                    {% endif -%}
+                    {%- endif -%}
                     {% endfor -%}
                     .to_owned(),
             )
-            .await
-{% elif entity.enum -%}
-        let db = manager.get_connection();
-
-        match db.get_database_backend() {
-            DbBackend::MySql | DbBackend::Sqlite => {}
-            DbBackend::Postgres => {
-                let create_enum_if_not_exists = r#"
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{{ entity.title|snake_case }}') THEN
-                            CREATE TYPE approval_status AS ENUM (
-                                {% for enum in entity.enum -%}
-                                '{{ enum }}'{{ ',' if not loop.last }}
-                                {% endfor %}
-                            );
-                        END IF;
-                    END $$;
-                "#;
-
-                // Execute the raw SQL statement
-                db.execute(Statement::from_string(DbBackend::Postgres, create_enum_if_not_exists.to_owned()))
-                    .await?;
-            }
-        }
+            {% elif entity.enum -%}
+            .create_type(
+                Type::create()
+                    .as_enum(Alias::new("{{ entity_name|snake_case }}"))
+                    .values(vec![
+                        {% for enum in entity.enum -%}
+                        Alias::new("{{ enum }}"){{ ',' if not loop.last }}
+                        {% endfor %}
+                    ])
+                    .to_owned(),
+            )
+            {% endif -%}
+            .await?;
+            {% endfor -%}
         Ok(())
 
-{% endif %}
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-
-{% if entity.properties %}
+        {% for entity_name,entity in entities | items -%}
         manager
-            .drop_table(Table::drop().table({{ enum_name }}::Table).to_owned())
-            .await
-{% elif entity.enum %}
-        let db = manager.get_connection();
-
-        match db.get_database_backend() {
-            DbBackend::MySql | DbBackend::Sqlite => {}
-            DbBackend::Postgres => {
-                manager
-                    .drop_type(Type::drop().name({{ entity.title|pascal_case }}::Enum).to_owned())
-                    .await?;
-            }
-        }
-
+        {% set enum_name = entity_name | pascal_case -%}
+        {% if entity.properties -%}
+        .drop_table(Table::drop().table({{ enum_name }}::Table).to_owned())
+        {% elif entity.enum -%}
+        .drop_type(Type::drop().name({{ entity_name|pascal_case }}::Enum).to_owned())
+        {% endif -%}
+        .await?;
+        {% endfor -%}
         Ok(())
-
-{% endif %}
     }
 }
 
@@ -110,14 +85,16 @@ enum {{ relation | pascal_case }} {
 {% endfor -%}
 {% endif %}
 
-{% if entity.properties -%}
+{% for entity_name,entity in entities | items -%}
+{% set enum_name = entity_name | pascal_case -%}
+{% if entity and entity.properties -%}
 {% for name, property in entity.properties | items -%}
 {% if property.enum -%}
 #[derive(Iden, EnumIter)]
-pub enum {{ name | pascal_case }} {
+pub enum {{ entity_name | pascal_case ~ name | pascal_case }} {
 {% for enum in property.enum -%}
 #[iden = "{{ enum }}"]
-{{ enum }}{{ ',' if not loop.last }}
+{{ macros.rust_var(enum,true) }}{{ ',' if not loop.last }}
 {% endfor -%}
 }
 {% endif -%}
@@ -132,15 +109,15 @@ enum {{ enum_name }} {
     {{ name | pascal_case }}{% if macros.m21_relation_equal_name(name,property)=='true' -%}Id{% endif -%}{{ ',' if not loop.last }}
     {% endfor %}
 }
-{% elif entity.enum %}
+{% elif entity and entity.enum %}
 #[derive(DeriveIden)]
-pub enum {{ entity.title | pascal_case }} {
-    #[sea_orm(iden = "{{ entity.title|snake_case }}")]
+pub enum {{ entity_name | pascal_case }} {
+    #[sea_orm(iden = "{{ entity_name|snake_case }}")]
     Enum,
 {% for enum in entity.enum -%}
     #[sea_orm(iden = "{{ enum }}")]
-    {{ enum }}{{ ',' if not loop.last }}
+    {{ macros.rust_var(enum,true) }}{{ ',' if not loop.last }}
 {% endfor %}
 }
 {% endif %}
-{% endfor -%}
+{% endfor %}
