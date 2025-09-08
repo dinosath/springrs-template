@@ -28,14 +28,10 @@ pub struct Model {
     #[crudcrate(primary_key, sortable, create_model = false, update_model = false, on_create = Uuid::new_v4())]
     pub id: Uuid,
     #[crudcrate(sortable, create_model = false, update_model = false, on_create = chrono::Utc::now())]
-    pub created: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
     #[crudcrate(sortable, create_model = false, update_model = false, on_create = chrono::Utc::now(), on_update = chrono::Utc::now())]
     pub last_updated: DateTime<Utc>,
-    {% for name, property in entity.properties | items -%}
-    {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
-    #[sea_orm(ignore)]
-    #[crudcrate(non_db_attr = true)]
-    {% endif -%}
+    {% for name, property in entity.properties | items | rejectattr("1.items") -%}
     pub {{ macros.rust_var(name,false) }}: {{ macros.get_type(name, property, name in entity.required) }}
     {%- if not loop.last -%},{% endif %}
     {% endfor %}

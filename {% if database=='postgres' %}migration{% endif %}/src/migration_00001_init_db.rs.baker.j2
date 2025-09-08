@@ -1,123 +1,29 @@
-{# generate controllers #}
-{% import "macros.jinja" as macros -%}
-use sea_orm_migration::{prelude::*, schema::*};
-use sea_orm::{EnumIter, Iterable};
+use sea_orm_migration::prelude::*;
+
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        {% for entity_name,entity in entities | items -%}
-        manager
-            {% set enum_name = entity_name | pascal_case -%}
-            {% if entity.properties -%}
-            .create_table(
-                Table::create()
-                    .table({{ enum_name }}::Table)
-                    .if_not_exists()
-                    .col(pk_auto({{ enum_name }}::Id))
-                    {% for name, property in entity.properties | items -%}
-                    {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{% endif -%}
-                    {%- if macros.relation_is_many_to_one(property=property)=='true' -%}
-                    {%- set relation = macros.get_relation(property) -%}
-                    .col(unsigned_null({{ enum_name }}::{{ name | pascal_case }}{% if macros.m21_relation_equal_name(name=name,property=property)=='true' -%}Id{% endif -%}))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("{{ name | foreign_key }}")
-                            .from({{ enum_name }}::Table, {{ enum_name }}::{{ name | pascal_case }}{% if macros.m21_relation_equal_name(name=name,property=property)=='true' -%}Id{% endif -%})
-                            .to({{ relation | pascal_case }}::Table, {{ relation | pascal_case }}::Id)
-                            .on_delete(ForeignKeyAction::Cascade)
-                            .on_update(ForeignKeyAction::Cascade),
-                    )
-                    {% else -%}
-                    .col({{ macros.get_migration_type(name=name,property=property,required=entity.required) }}({{ enum_name }}::{{ name | pascal_case }}
-                    {% if property.enum -%}
-                    ,Alias::new("{{ name | snake_case }}"),{{ entity_name | pascal_case ~ name | pascal_case }}::iter()
-                    {%- endif -%}
-                    ))
-                    {%- endif -%}
-                    {% endfor -%}
-                    .to_owned(),
-            )
-            {% elif entity.enum -%}
-            .create_type(
-                Type::create()
-                    .as_enum(Alias::new("{{ entity_name|snake_case }}"))
-                    .values(vec![
-                        {% for enum in entity.enum -%}
-                        Alias::new("{{ enum }}"){{ ',' if not loop.last }}
-                        {% endfor %}
-                    ])
-                    .to_owned(),
-            )
-            {% endif -%}
-            .await?;
-            {% endfor -%}
-        Ok(())
+        let db = manager.get_connection();
 
+        db.execute_unprepared(
+        "
+    {% include 'templates/init_db.jinja' -%}
+        "
+        ).await?;
+
+        Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        {% for entity_name,entity in entities | items -%}
-        manager
-        {% set enum_name = entity_name | pascal_case -%}
-        {% if entity.properties -%}
-        .drop_table(Table::drop().table({{ enum_name }}::Table).to_owned())
-        {% elif entity.enum -%}
-        .drop_type(Type::drop().name({{ entity_name|pascal_case }}::Enum).to_owned())
-        {% endif -%}
-        .await?;
-        {% endfor -%}
+        manager.get_connection()
+            .execute_unprepared("
+            {% include 'templates/drop_db.jinja' -%}
+            ")
+            .await?;
+
         Ok(())
     }
 }
-
-{% set m21_relations = macros.get_m21_relations_type(entity) | trim -%}
-{% if m21_relations | length > 0 -%}
-{% set m21_relations = m21_relations | split(",") | unique -%}
-{% for relation in m21_relations -%}
-#[derive(DeriveIden)]
-enum {{ relation | pascal_case }} {
-    Table,
-    Id,
-}
-{% endfor -%}
-{% endif %}
-
-{% for entity_name,entity in entities | items -%}
-{% set enum_name = entity_name | pascal_case -%}
-{% if entity and entity.properties -%}
-{% for name, property in entity.properties | items -%}
-{% if property.enum -%}
-#[derive(Iden, EnumIter)]
-pub enum {{ entity_name | pascal_case ~ name | pascal_case }} {
-{% for enum in property.enum -%}
-#[iden = "{{ enum }}"]
-{{ macros.rust_var(enum,true) }}{{ ',' if not loop.last }}
-{% endfor -%}
-}
-{% endif -%}
-{% endfor -%}
-
-#[derive(DeriveIden)]
-enum {{ enum_name }} {
-    Table,
-    Id,
-    {% for name, property in entity.properties | items -%}
-    {% if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property=property)=='true' -%}{% continue -%}{% endif -%}
-    {{ name | pascal_case }}{% if macros.m21_relation_equal_name(name,property)=='true' -%}Id{% endif -%}{{ ',' if not loop.last }}
-    {% endfor %}
-}
-{% elif entity and entity.enum %}
-#[derive(DeriveIden)]
-pub enum {{ entity_name | pascal_case }} {
-    #[sea_orm(iden = "{{ entity_name|snake_case }}")]
-    Enum,
-{% for enum in entity.enum -%}
-    #[sea_orm(iden = "{{ enum }}")]
-    {{ macros.rust_var(enum,true) }}{{ ',' if not loop.last }}
-{% endfor %}
-}
-{% endif %}
-{% endfor %}

@@ -43,12 +43,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //let _guard = Assets::start_dev_server(true);
 
     {% if protocol=='rest'-%}
-    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite::memory:".to_string());
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
     let db: DatabaseConnection = Database::connect(&database_url).await?;
 
     let (router, apidocs) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         {% for entity_name,entity in entities | items -%}
-        .merge(models::{{entity_name | snake_case}}::router_with_path(&db, "/{{entity_name | snake_case}}"))
+        .merge(models::{{entity_name | snake_case}}::router_with_path(&db, "/{{entity_name | plural | snake_case}}"))
         {% endfor -%}
         .split_for_parts();
     let app_router = router.merge(Scalar::with_url("/docs", apidocs));
