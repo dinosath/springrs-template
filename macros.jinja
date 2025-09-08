@@ -111,13 +111,15 @@
         {%- set max = property.maximum if property.maximum is defined else property.exclusiveMaximum if property.exclusiveMaximum is defined else None -%}
         {%- if min is not none and min >= 0 -%}
             {%- if max is not none and max <= 255 -%}
-                {%- set type = 'u8' -%}
+                {%- set type = 'i8' -%}
             {%- elif max is not none and max <= 65535 -%}
-                {%- set type = 'u16' -%}
+                {%- set type = 'i16' -%}
             {%- elif max is not none and max <= 4294967295 -%}
-                {%- set type = 'u32' -%}
+                {%- set type = 'i32' -%}
+            {%- elif max is not none and max <= 9223372036854775807 -%}
+                {%- set type = 'i64' -%}
             {%- else -%}
-                {%- set type = 'u64' -%}
+                {%- set type = 'i32' -%}
             {%- endif -%}
         {%- else -%}
             {%- if max is not none and max <= 127 -%}
