@@ -25,11 +25,11 @@ migration = { path = "migration" }
 sea-orm = { version = "1.1", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.17", features = ["v4", "serde","fast-rng"] }
-crudcrate = { version = "0.5.0", features = ["postgresql","sqlite"] }
-crudcrate-derive = { version = "0.5.0" }
-utoipa = { version = "5.4.0", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-axum = "0.2.0"
-utoipa-scalar = { version = "0.3.0", features = ["axum"] }
+crudcrate = { version = "0.5", features = ["postgresql","sqlite"] }
+crudcrate-derive = { version = "0.5" }
+utoipa = { version = "5.4", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 {% endif -%}
 {{ 'spring-web = "0.4"' if 'rest'==protocol or 'none'!=frontend_framework -}}
 {% if 'grpc'==protocol -%}
@@ -39,10 +39,10 @@ tonic = "0.13"
 prost-types = "0.13"
 {% endif -%}
 {% if frontend_framework != 'none' %}
-vite-rs = "0.2.1"
-vite-rs-axum-0-8 = "0.2.1"
+vite-rs = "0.2"
+vite-rs-axum-0-8 = "0.2"
 {% endif %}
-tokio = { version = "1.46", features = ["full", "tracing"] }
+tokio = { version = "1.47", features = ["full", "tracing"] }
 
 {% if 'grpc'==protocol -%}
 [build-dependencies]

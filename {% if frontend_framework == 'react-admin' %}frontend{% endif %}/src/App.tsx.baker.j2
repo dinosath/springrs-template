@@ -1,7 +1,6 @@
 import { Admin, Resource } from "react-admin";
 import { dataProvider } from './dataProvider';
-{% for entity_name,entity in entities | items -%}
-{% if not entity.properties -%}{% continue -%}{% endif -%}
+{% for entity_name,entity in entities | items | selectattr("1.properties") -%}
 import {{ entity.title | camel_case }} from "./models/{{ entity.title | camel_case }}";
 {% endfor %}
 import { Dashboard } from "./Dashboard";
