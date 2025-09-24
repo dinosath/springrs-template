@@ -1,0 +1,48 @@
+{% import "templates/macros_front.jinja" as macros %}
+import { Bookmark } from "lucide-react";
+import { Create, DataTable, Edit, List, SimpleForm, TextField, TextInput, BooleanInput, DateField, ReferenceField, EditButton, ReferenceInput, ReferenceArrayInput, NumberField, NumberInput, AutocompleteInput, SelectInput, UrlField } from "@/components/admin";
+import { ResourceProps, required } from "ra-core";
+
+export const {{ entity_name | pascal_case }}Create = () => (
+    <Create redirect="list">
+        <SimpleForm>
+            <TextInput source="name" label="Name" validate={required()} />
+            {% for name,property in entity.properties | items -%}
+            <{{ macros.get_field(property=property) }} source="{{ macros.source(name=name,property=property)}}" />
+            {% endfor %}
+        </SimpleForm>
+    </Create>
+);
+
+export const {{ entity_name | pascal_case }}Edit = () => (
+    <Edit>
+        <div className="flex flex-col lg:flex-row items-start justify-between">
+            <SimpleForm>
+                {% for name,property in entity.properties | items -%}
+                <{{ macros.get_field(property=property) }} source="{{ macros.source(name=name,property=property)}}" />
+                {% endfor %}
+            </SimpleForm>
+        </div>
+    </Edit>
+);
+
+export const {{ entity_name | pascal_case }}List = () => (
+    <List perPage={50}>
+        <DataTable>
+            {% for name,property in entity.properties | items -%}
+            <DataTable.Col source="{{ macros.source(name=name,property=property)}}" />
+            {% endfor %}
+        </DataTable>
+    </List>
+);
+
+export const {{ entity_name | plural | pascal_case }}: ResourceProps = {
+    name: "{{ entity_name | plural | kebab_case }}",
+    list: {{ entity_name | pascal_case }}List,
+    edit: {{ entity_name | pascal_case }}Edit,
+    create: {{ entity_name | pascal_case }}Create,
+    recordRepresentation: "name",
+    icon: Bookmark,
+};
+
+export default {{ entity_name | plural | pascal_case }};

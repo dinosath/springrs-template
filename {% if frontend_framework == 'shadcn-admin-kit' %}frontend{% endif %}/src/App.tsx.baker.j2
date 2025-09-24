@@ -1,0 +1,23 @@
+import { Admin } from "@/components/admin";
+import simpleRestProvider from 'ra-data-simple-rest';
+import {Resource} from "ra-core";
+import { Dashboard } from "./components/dashboard/Dashboard";
+{% for entity_name,entity in entities | items | selectattr("1.properties") -%}
+import {{ entity_name | camel_case }} from "./resources/{{ entity_name | snake_case }}"
+{% endfor %}
+
+const dataProvider = simpleRestProvider('/api');
+
+function App() {
+    return (
+        <Admin
+            dataProvider={dataProvider}
+            dashboard={Dashboard}
+        >
+            {% for entity_name,entity in entities | items | selectattr("1.properties") -%}
+            <Resource name="{{ entity_name | plural | kebab_case }}" { ...{{ entity_name | camel_case }} }/>
+            {% endfor %}
+        </Admin>
+    );
+}
+export default App;

@@ -1,0 +1,31 @@
+FROM rust:alpine as builder
+
+WORKDIR /app/src
+RUN USER=root
+
+RUN apk add --no-cache pkgconfig build-base musl-dev libressl-dev
+COPY ./ ./
+RUN cargo build --release
+
+{% if frontend_framework != 'none' -%}
+FROM node:20-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+COPY . /app
+WORKDIR /app
+RUN pnpm install
+RUN pnpm build
+
+COPY --from=node /app/dist /app/static
+{% endif -%}
+
+FROM alpine:latest
+WORKDIR /app
+RUN apk update && apk add openssl ca-certificates
+
+COPY --from=builder /app/src/target/release/{{project_name}}  /app/{{project_name}}
+COPY --from=builder /app/config /app/config
+
+ENTRYPOINT ["/app/{{project_name}} "]
+CMD ["start"]

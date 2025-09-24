@@ -54,6 +54,20 @@ questions:
       - sea-orm
       - open-telemetry
 
+  protocol:
+    type: str
+    help: What protocol to generate the API with?
+    default: rest
+    choices:
+      - rest
+      - grpc
+      - graphql
+
+  crudcrate:
+    type: bool
+    help: Do you want to use crudcrate for generation of rest controllers?
+    default: true
+
   entities:
     type: json
     help: Configure your entities

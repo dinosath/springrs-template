@@ -1,4 +1,5 @@
-{% if 'rest'==protocol -%}
+pub mod auth;
+{% if 'rest'==protocol and crudcrate==false -%}
 {% for entity_name,entity in entities | items | selectattr("1.properties")-%}
 pub mod {{ entity_name | snake_case }};
 {% endfor -%}
