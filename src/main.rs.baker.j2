@@ -10,10 +10,6 @@ use sea_orm::{Database, DatabaseConnection};
 use std::env;
 use spring_web::{Router, WebConfigurator, WebPlugin};
 {% endif -%}
-{% if frontend_framework != 'none' %}
-use vite_rs_axum_0_8::ViteServe;
-use vite_rs::Embed;
-{% endif -%}
 
 mod service;
 {% if database=='postgres' -%}
@@ -23,10 +19,6 @@ mod plugin;
 {% if protocol=='rest' -%}
 mod controllers;
 {% endif -%}
-
-#[derive(vite_rs::Embed)]
-#[root = "frontend"]
-struct Assets;
 
 #[derive(OpenApi)]
 #[openapi()]
@@ -39,9 +31,6 @@ use utoipa_scalar::{Scalar, Servable};
 {{ '#[auto_config(WebConfigurator)]' if protocol=='rest' }}
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    //#[cfg(debug_assertions)]
-    //let _guard = Assets::start_dev_server(true);
-
     {% if protocol=='rest'-%}
     let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
     let db: DatabaseConnection = Database::connect(&database_url).await?;
@@ -67,19 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_plugin(WebPlugin)
         .add_router(app_router)
         {% endif -%}
-        {% if frontend_framework != 'none' %}
-        //.add_router(router())
-        {% endif -%}
         {{ '.add_plugin(WebPlugin)' if 'rest' in features }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc'==protocol }}
         .run().await;
     Ok(())
 }
-{% if frontend_framework != 'none' %}
-fn router() -> Router {
-    Router::new()
-        .route_service("/", ViteServe::new(Assets::boxed()))
-        .route_service("/{*path}", ViteServe::new(Assets::boxed()))
-}
-{% endif -%}

@@ -38,10 +38,6 @@ prost = "0.13"
 tonic = "0.13"
 prost-types = "0.13"
 {% endif -%}
-{% if frontend_framework != 'none' %}
-vite-rs = "0.2"
-vite-rs-axum-0-8 = "0.2"
-{% endif %}
 tokio = { version = "1.47", features = ["full", "tracing"] }
 
 {% if 'grpc'==protocol -%}
