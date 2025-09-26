@@ -15,7 +15,7 @@ function App() {
             dashboard={Dashboard}
         >
             {% for entity_name,entity in entities | items | selectattr("1.properties") -%}
-            <Resource name="{{ entity_name | plural | kebab_case }}" { ...{{ entity_name | camel_case }} }/>
+            <Resource { ...{{ entity_name | camel_case }} }/>
             {% endfor %}
         </Admin>
     );
