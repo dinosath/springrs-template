@@ -4,6 +4,9 @@ version = "{{project_version}}"
 edition = "{{project_edition}}"
 publish = false
 
+[workspace]
+members = [".", "migration"]
+
 [profile.release]
 codegen-units = 1
 lto = true
@@ -26,7 +29,6 @@ sea-orm = { version = "1.1", features = ["sqlx-postgres","runtime-tokio-rustls",
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.17", features = ["v4", "serde","fast-rng"] }
 crudcrate = { version = "0.5", features = ["postgresql","sqlite"] }
-crudcrate-derive = { version = "0.5" }
 utoipa = { version = "5.4", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
@@ -37,7 +39,7 @@ spring-grpc = "0.4"
 prost = "0.13"
 tonic = "0.13"
 prost-types = "0.13"
-{% endif -%}
+{% endif %}
 tokio = { version = "1.47", features = ["full", "tracing"] }
 
 {% if 'grpc'==protocol -%}

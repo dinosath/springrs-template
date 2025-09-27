@@ -1,6 +1,11 @@
 {% import "templates/macros_front.jinja" as macros %}
+{% set global = namespace(imports=[]) %}
+{% for name,property in entity.properties | items -%}
+    {% set global.imports = global.imports + [macros.get_field(property=property)] %}
+    {% set global.imports = global.imports + [macros.get_input_field(property=property)] %}
+{% endfor %}
 import { Bookmark } from "lucide-react";
-import { Create, DataTable, Edit, List, SimpleForm, TextField, TextInput, BooleanInput, DateField, ReferenceField, EditButton, ReferenceInput, ReferenceArrayInput, NumberField, NumberInput, AutocompleteInput, SelectInput, UrlField } from "@/components/admin";
+import { Create, DataTable, Edit, List, SimpleForm, {{ global.imports | unique | sort | join(', ') }} } from "@/components/admin";
 import { ResourceProps, required } from "ra-core";
 
 export const {{ entity_name | pascal_case }}Create = () => (

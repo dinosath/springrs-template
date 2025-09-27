@@ -3,13 +3,13 @@
 {% if database=='postgres' -%}
 use spring_sea_orm::{SeaOrmPlugin};
 use plugin::SeaOrmMigrationPlugin;
-{% endif -%}
+{% endif %}
 {{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
 {% if frontend_framework != 'none' or protocol=='rest'-%}
 use sea_orm::{Database, DatabaseConnection};
 use std::env;
 use spring_web::{Router, WebConfigurator, WebPlugin};
-{% endif -%}
+{% endif %}
 
 mod service;
 {% if database=='postgres' -%}
@@ -18,7 +18,7 @@ mod plugin;
 {% endif -%}
 {% if protocol=='rest' -%}
 mod controllers;
-{% endif -%}
+{% endif %}
 
 #[derive(OpenApi)]
 #[openapi()]

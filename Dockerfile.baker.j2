@@ -12,11 +12,12 @@ FROM node:20-slim AS node
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
-COPY . /app
+COPY ./frontend /app
+ENV CI=true
 WORKDIR /app
 RUN pnpm install
 RUN pnpm build
-{% endif -%}
+{% endif %}
 
 FROM alpine:latest
 WORKDIR /app
@@ -26,6 +27,6 @@ COPY --from=builder /app/src/target/release/{{project_name}}  /app/{{project_nam
 COPY --from=builder /app/config /app/config
 {% if frontend_framework != 'none' -%}
 COPY --from=node /app/dist /app/static
-{% endif -%}
+{% endif %}
 ENTRYPOINT ["/app/{{project_name}} "]
 CMD ["start"]
