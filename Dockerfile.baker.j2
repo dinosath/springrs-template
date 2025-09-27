@@ -28,5 +28,5 @@ COPY --from=builder /app/config /app/config
 {% if frontend_framework != 'none' -%}
 COPY --from=node /app/dist /app/static
 {% endif %}
-ENTRYPOINT ["/app/{{project_name}} "]
+ENTRYPOINT ["/app/{{project_name}}"]
 CMD ["start"]
