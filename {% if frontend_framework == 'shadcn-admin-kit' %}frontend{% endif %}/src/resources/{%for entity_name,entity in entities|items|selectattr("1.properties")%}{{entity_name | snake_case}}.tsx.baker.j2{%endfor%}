@@ -1,7 +1,6 @@
 {% import "templates/macros_front.jinja" as macros %}
 {% set global = namespace(imports=[]) %}
 {% for name,property in entity.properties | items -%}
-    {% set global.imports = global.imports + [macros.get_field(property=property)] %}
     {% set global.imports = global.imports + [macros.get_input_field(property=property)] %}
 {% endfor %}
 import { Bookmark } from "lucide-react";
