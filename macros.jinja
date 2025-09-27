@@ -145,7 +145,7 @@
     {%- else -%}
         {%- set type = 'String' -%}
     {%- endif -%}
-    {%- if not required and type is not none and 'Vec<' in type -%}
+    {%- if not required -%}
         Option<{{ type }}>
     {%- else -%}
         {{ type }}
