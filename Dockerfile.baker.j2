@@ -21,7 +21,6 @@ RUN pnpm build
 
 FROM alpine:latest
 WORKDIR /app
-RUN apk update && apk add openssl ca-certificates
 
 COPY --from=builder /app/target/release/{{project_name}}  /app/{{project_name}}
 COPY --from=builder /app/config /app/config

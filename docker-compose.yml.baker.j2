@@ -10,7 +10,7 @@ services:
     environment:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432
   redis:
-    image: redis:alpine
+    image: redis
     ports:
       - 6379:6379
   postgres:

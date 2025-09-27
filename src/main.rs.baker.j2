@@ -8,7 +8,7 @@ use plugin::SeaOrmMigrationPlugin;
 {% if frontend_framework != 'none' or protocol=='rest'-%}
 use sea_orm::{Database, DatabaseConnection};
 use std::env;
-use spring_web::{Router, WebConfigurator, WebPlugin};
+use spring_web::{WebConfigurator, WebPlugin};
 {% endif %}
 
 mod service;
