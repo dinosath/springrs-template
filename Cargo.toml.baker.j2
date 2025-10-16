@@ -15,15 +15,26 @@ debug = false
 panic = "abort"
 
 [dependencies]
+dotenvy = "0.15"
 axum = { version = "0.8" }
+{% if authentication=='oauth2'-%}
+axum-oidc = "0.6"
+tower = "0.5"
+tower-sessions = "0.14"
+{% endif %}
 anyhow = "1.0"
 hyper = "1.6"
 serde = "1.0"
 serde_json = "1.0"
+{% if backend=='spring-rs' -%}
 spring = "0.4"
 {{ 'spring-opentelemetry = "0.4"' if 'open-telemetry' in features }}
+{{ 'spring-sea-orm = { version = "0.4", features = ["postgres","with-web",] }' if database=='postgres' }}
+{{ 'spring-web = "0.4"' if 'rest'==protocol -}}
+{{ 'spring-grpc = "0.4"' if 'grpc'==protocol -}}
+{% endif %}
+
 {% if database=='postgres' -%}
-spring-sea-orm = { version = "0.4", features = ["postgres","with-web",] }
 migration = { path = "migration" }
 sea-orm = { version = "1.1", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -33,9 +44,8 @@ utoipa = { version = "5.4", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 {% endif -%}
-{{ 'spring-web = "0.4"' if 'rest'==protocol or 'none'!=frontend_framework -}}
+
 {% if 'grpc'==protocol -%}
-spring-grpc = "0.4"
 prost = "0.13"
 tonic = "0.13"
 prost-types = "0.13"

@@ -1,0 +1,98 @@
+use chrono::{DateTime, Utc};
+use crudcrate::{CRUDResource, EntityToModels};
+use sea_orm::{Database, DatabaseConnection, entity::prelude::*};
+use std::env;
+use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_scalar::{Scalar, Servable};
+{% if protocol=='rest' and authentication=='oauth2'-%}
+use axum::{
+    error_handling::HandleErrorLayer, http::Uri, response::IntoResponse,
+};
+use axum_oidc::{
+    error::MiddlewareError, EmptyAdditionalClaims, OidcAuthLayer, OidcClaims, OidcLoginLayer,
+    OidcRpInitiatedLogout,
+};
+use tower::ServiceBuilder;
+use tower_sessions::{
+    cookie::{time::Duration, SameSite},
+    Expiry, MemoryStore, SessionManagerLayer,
+};
+{% endif -%}
+use tokio::net::TcpListener;
+
+mod service;
+{{ 'mod models;' if database=='postgres' }}
+{{ 'mod controllers;' if protocol=='rest' and crudcrate==false }}
+
+#[derive(OpenApi)]
+#[openapi()]
+struct ApiDoc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
+    let db: DatabaseConnection = Database::connect(&database_url).await?;
+
+    {% if protocol=='rest' and authentication=='oauth2'-%}
+    let app_url = std::env::var("APP_URL").expect("APP_URL env variable");
+    let issuer = std::env::var("ISSUER").expect("ISSUER env variable");
+    let client_id = std::env::var("CLIENT_ID").expect("CLIENT_ID env variable");
+    let client_secret = std::env::var("CLIENT_SECRET").ok();
+
+    let session_store = MemoryStore::default();
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(false)
+        .with_same_site(SameSite::Lax)
+        .with_expiry(Expiry::OnInactivity(Duration::seconds(120)));
+
+    let oidc_login_service = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(|e: MiddlewareError| async {
+            e.into_response()
+        }))
+        .layer(OidcLoginLayer::<EmptyAdditionalClaims>::new());
+
+    let oidc_auth_service = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(|e: MiddlewareError| async {
+            e.into_response()
+        }))
+        .layer(
+            OidcAuthLayer::<EmptyAdditionalClaims>::discover_client(
+                Uri::from_maybe_shared(app_url).expect("valid APP_URL"),
+                issuer,
+                client_id,
+                client_secret,
+                vec![],
+            )
+            .await
+            .unwrap(),
+        );
+
+    {% endif -%}
+
+
+    let (router, apidocs) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+        {% for entity_name,entity in entities | items -%}
+        .merge(models::{{entity_name | snake_case}}::router_with_path(&db, "/api/{{entity_name | plural | kebab_case}}"))
+        {% endfor -%}
+        .split_for_parts();
+    let app_router = router.merge(Scalar::with_url("/docs", apidocs));
+
+    {% if protocol=='rest' and authentication=='oauth2'-%}
+    let app_router =
+        .layer(oidc_login_service)
+        .layer(oidc_auth_service)
+        .layer(session_layer);
+    {% endif -%}
+
+    let listener = TcpListener::bind("[::]:8080").await.unwrap();
+    axum::serve(listener, app.into_make_service())
+        .await
+        .unwrap();
+
+    let listener = TcpListener::bind("[::]:8080").await.unwrap();
+    println!("🚀🚀🚀 Started axum web server on port 8080.");
+    axum::serve(listener, app_router).await?;
+    Ok(())
+}

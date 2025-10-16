@@ -25,6 +25,14 @@ questions:
     help: Please enter the edition of the project
     default: "2021"
 
+  backend:
+    type: str
+    help: What backend do you want to use?
+    default: axum
+    choices:
+      - axum
+      - spring-rs
+
   frontend_framework:
     type: str
     help: What frontend framework do you want to use?
@@ -33,6 +41,14 @@ questions:
       - none
       - solid-js
       - react-admin
+
+  authentication:
+    type: str
+    help: What authentication method do you want to use?
+    default: oauth2
+    choices:
+      - oauth2
+      - none
 
   database:
     type: str
