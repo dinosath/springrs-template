@@ -1,0 +1,396 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Strapi v5 Content Types Schema",
+    "description": "A map of Strapi v5 content-types keyed by content-type name (e.g., BlogPost, UserProfile). Each value follows Strapi's schema.json structure.",
+    "type": "object",
+
+    "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9_-]*$": {
+            "type": "object",
+            "description": "Strapi v5 content-type definition (schema.json format).",
+            "required": ["kind", "collectionName", "info", "attributes"],
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["collectionType", "singleType"]
+                },
+
+                "collectionName": {
+                    "type": "string",
+                    "description": "Database collection/table name. Usually snake_case plural for collectionType."
+                },
+
+                "info": {
+                    "type": "object",
+                    "required": ["displayName"],
+                    "properties": {
+                        "displayName": { "type": "string" },
+                        "singularName": { "type": "string" },
+                        "pluralName": { "type": "string" },
+                        "description": { "type": "string" },
+                        "icon": { "type": "string" }
+                    },
+                    "additionalProperties": true
+                },
+
+                "options": {
+                    "type": "object",
+                    "description": "Content-type options; Strapi v5 includes draftAndPublish and may add more in the future.",
+                    "properties": {
+                        "draftAndPublish": { "type": "boolean" }
+                    },
+                    "additionalProperties": true
+                },
+
+                "pluginOptions": {
+                    "type": "object",
+                    "description": "Plugin-specific options (e.g., i18n, users-permissions).",
+                    "additionalProperties": true
+                },
+
+                "priority": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Priority for ordering collections."
+                },
+
+                "attributes": {
+                    "type": "object",
+                    "description": "Attribute map keyed by attribute name.",
+                    "patternProperties": {
+                        "^[a-zA-Z_][a-zA-Z0-9_-]*$": {
+                            "type": "object",
+                            "required": ["type"],
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "string",
+                                        "text",
+                                        "richtext",
+                                        "password",
+                                        "email",
+                                        "integer",
+                                        "biginteger",
+                                        "float",
+                                        "decimal",
+                                        "boolean",
+                                        "date",
+                                        "datetime",
+                                        "time",
+                                        "enumeration",
+                                        "json",
+                                        "uid",
+                                        "media",
+                                        "relation",
+                                        "component",
+                                        "dynamiczone"
+                                    ]
+                                },
+
+                                "required": { "type": "boolean" },
+                                "unique": { "type": "boolean" },
+                                "private": { "type": "boolean" },
+                                "default": {},
+
+                                "minLength": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
+                                "maxLength": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
+                                "regex": { "type": "string" },
+
+                                "min": { "type": "number" },
+                                "max": { "type": "number" },
+
+                                "multiple": {
+                                    "type": "boolean",
+                                    "description": "For media/component relations where multiple values are allowed."
+                                },
+
+                                "enum": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Allowed values for enumeration."
+                                },
+
+                                "relation": {
+                                    "type": "string",
+                                    "enum": [
+                                        "oneToOne",
+                                        "oneToMany",
+                                        "manyToOne",
+                                        "manyToMany",
+                                        "morphToOne",
+                                        "morphToMany"
+                                    ],
+                                    "description": "Strapi relation type. Polymorphic values included."
+                                },
+                                "target": {
+                                    "type": "string",
+                                    "description": "Target content-type UID (e.g., api::article.article, plugin::users-permissions.user, strapi::role, or custom namespaces)."
+                                },
+                                "inversedBy": {
+                                    "type": "string",
+                                    "description": "Name of the attribute on the target that inverses this relation."
+                                },
+                                "mappedBy": {
+                                    "type": "string",
+                                    "description": "Name of the attribute on the source used to map the relation when required."
+                                },
+
+                                "component": {
+                                    "type": "string",
+                                    "description": "Component UID (e.g., shared.address). Used when type = component."
+                                },
+
+                                "components": {
+                                    "type": "array",
+                                    "description": "List of component UIDs for dynamic zones.",
+                                    "items": { "type": "string" }
+                                },
+
+                                "repeatable": {
+                                    "type": "boolean",
+                                    "description": "For component attributes to allow multiple entries."
+                                },
+
+                                "allowedTypes": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": [
+                                            "images",
+                                            "files",
+                                            "videos",
+                                            "audios"
+                                        ]
+                                    },
+                                    "description": "Media allowed types filter."
+                                },
+
+                                "maxSize": {
+                                    "type": "number",
+                                    "description": "Max media size in MB."
+                                },
+
+                                "targetField": {
+                                    "type": "string",
+                                    "description": "For UID fields: the attribute whose value populates the UID."
+                                },
+
+                                "config": {
+                                    "type": "object",
+                                    "description": "Advanced attribute config (indices, custom options, ACL).",
+                                    "additionalProperties": true
+                                },
+
+                                "index": {
+                                    "type": "boolean",
+                                    "description": "Hint to create an index; actual support is defined by Strapi/DB layer."
+                                }
+                            },
+
+                            "allOf": [
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "const": "enumeration" }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": { "required": ["enum"] }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "const": "uid" }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "targetField": { "type": "string" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "const": "relation" }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "required": [
+                                            "relation",
+                                            "target",
+                                            "mappedBy"
+                                        ],
+                                        "properties": {
+                                            "target": {
+                                                "type": "string",
+                                                "pattern": "[A-Za-z0-9_-]+$"
+                                            }
+                                        }
+                                    },
+                                    "else": {
+                                        "not": {
+                                            "anyOf": [
+                                                { "required": ["relation"] },
+                                                { "required": ["target"] },
+                                                { "required": ["inversedBy"] },
+                                                { "required": ["mappedBy"] }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "const": "component" }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "required": ["component"],
+                                        "properties": {
+                                            "component": {
+                                                "type": "string",
+                                                "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$",
+                                                "description": "Component UID: <category>.<component>"
+                                            },
+                                            "repeatable": { "type": "boolean" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "const": "dynamiczone" }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "required": ["components"],
+                                        "properties": {
+                                            "components": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string",
+                                                    "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+                                                },
+                                                "minItems": 1
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": {
+                                                "enum": [
+                                                    "integer",
+                                                    "biginteger"
+                                                ]
+                                            }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "min": { "type": "integer" },
+                                            "max": { "type": "integer" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": {
+                                                "enum": ["float", "decimal"]
+                                            }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "min": { "type": "number" },
+                                            "max": { "type": "number" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": {
+                                                "enum": [
+                                                    "string",
+                                                    "text",
+                                                    "richtext",
+                                                    "password",
+                                                    "email",
+                                                    "uid"
+                                                ]
+                                            }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "minLength": {
+                                                "type": "integer",
+                                                "minimum": 0
+                                            },
+                                            "maxLength": {
+                                                "type": "integer",
+                                                "minimum": 0
+                                            },
+                                            "regex": { "type": "string" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": {
+                                                "not": {
+                                                    "enum": [
+                                                        "integer",
+                                                        "biginteger",
+                                                        "float",
+                                                        "decimal"
+                                                    ]
+                                                }
+                                            }
+                                        },
+                                        "required": ["type"]
+                                    },
+                                    "then": {
+                                        "not": {
+                                            "anyOf": [
+                                                { "required": ["min"] },
+                                                { "required": ["max"] }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ],
+
+                            "additionalProperties": true
+                        }
+                    },
+
+                    "additionalProperties": true
+                }
+            },
+
+            "additionalProperties": true
+        }
+    },
+
+    "additionalProperties": false
+}

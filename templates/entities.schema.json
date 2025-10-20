@@ -1,0 +1,155 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9_-]*$": {
+            "type": "object",
+            "required": ["kind", "attributes"],
+            "properties": {
+                "type": { "type": "string", "const": "object" },
+                "title": { "type": "string" },
+                "description": { "type": "string" },
+                "attributes": {
+                    "type": "object",
+                    "patternProperties": {
+                        "^[a-zA-Z_][a-zA-Z0-9_-]*$": {
+                            "type": "object",
+                            "required": ["type"],
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "string",
+                                        "text",
+                                        "integer",
+                                        "float",
+                                        "boolean",
+                                        "email",
+                                        "datetime",
+                                        "date",
+                                        "json",
+                                        "uid",
+                                        "relation",
+                                        "decimal",
+                                        "enumeration"
+                                    ]
+                                },
+                                "description": { "type": "string" },
+                                "required": { "type": "boolean" },
+                                "unique": { "type": "boolean" },
+                                "default": {},
+                                "enum": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "relation": {
+                                    "type": "string",
+                                    "enum": [
+                                        "oneToOne",
+                                        "oneToMany",
+                                        "manyToOne",
+                                        "manyToMany"
+                                    ]
+                                },
+                                "target": { "type": "string" },
+                                "inversedBy": { "type": "string" },
+                                "mappedBy": { "type": "string" },
+                                "min": { "type": "number" },
+                                "max": { "type": "number" }
+                            },
+                            "allOf": [
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "const": "relation" }
+                                        }
+                                    },
+                                    "then": {
+                                        "required": [
+                                            "relation",
+                                            "target",
+                                            "mappedBy"
+                                        ],
+                                        "properties": {
+                                            "relation": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "oneToOne",
+                                                    "oneToMany",
+                                                    "manyToOne",
+                                                    "manyToMany"
+                                                ]
+                                            },
+                                            "target": {
+                                                "type": "string",
+                                                "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                                            }
+                                        }
+                                    },
+                                    "else": {
+                                        "not": {
+                                            "anyOf": [
+                                                { "required": ["relation"] },
+                                                { "required": ["target"] },
+                                                { "required": ["mappedBy"] }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "enum": ["integer"] }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "min": { "type": "integer" },
+                                            "max": { "type": "integer" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": { "enum": ["float"] }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "min": { "type": "number" },
+                                            "max": { "type": "number" }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "type": {
+                                                "not": {
+                                                    "enum": ["integer", "float"]
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "not": {
+                                            "anyOf": [
+                                                { "required": ["min"] },
+                                                { "required": ["max"] }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ],
+                            "additionalProperties": false
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "additionalProperties": true
+}

@@ -1,0 +1,115 @@
+{# Macros for new schema only (entities.schema.json). Legacy support removed. #}
+
+{# Attribute-level relation helpers #}
+{% macro map_to_name_and_relation(name_and_property) -%}
+    {% set name = name_and_property[0] -%}
+    {% set property = name_and_property[1] -%}
+    {% if property.type == 'relation' %}{"name": "{{ name }}", "relation": "{{ property.target }}", "cardinality": "{{ property.relation }}"}{% endif %}
+{%- endmacro %}
+
+{%- macro get_migration_type(name, property, required) -%}
+{%- filter trim -%}
+{% if property.type == 'relation' %}
+    {# Only non-manyToMany relations produce a FK column. manyToMany handled via join table. #}
+    {% if property.relation != 'manyToMany' %}unsigned{% else %}skip{% endif %}{% if name not in required %}_null{% endif %}
+{% elif property.type == 'string' %}
+    {% if property.format == 'uuid' %}uuid{% elif property.format == 'date-time' %}timestamp_with_time_zone{% elif property.format == 'date' %}date_time{% elif property.format == 'time' %}time{% elif property.enum %}enumeration{% else %}string{% endif %}{% if name not in required %}_null{% endif %}
+{% elif property.type == 'boolean' %}boolean{% if name not in required %}_null{% endif %}
+{% elif property.type == 'integer' %}
+    {%- set min = property.minimum or property.exclusiveMinimum -%}
+    {%- set max = property.maximum or property.exclusiveMaximum -%}
+    {%- if min is defined and min is not none and min >= 0 -%}
+        {%- if max is defined and max is not none and max <= 255 -%}tiny_unsigned
+        {%- elif max is defined and max is not none and max <= 65535 -%}small_unsigned
+        {%- elif max is defined and max is not none and max <= 4294967295 -%}unsigned
+        {%- else -%}big_unsigned{%- endif -%}
+    {%- else -%}
+        {%- if max is defined and max is not none and max <= 127 -%}tiny_integer
+        {%- elif max is defined and max is not none and max <= 32767 -%}small_integer
+        {%- elif max is defined and max is not none and max <= 2147483647 -%}integer
+        {%- else -%}big_integer{%- endif -%}
+    {%- endif -%}{% if name not in required %}_null{% endif %}
+{% elif property.type == 'number' %}
+    {%- set min = property.minimum or property.exclusiveMinimum -%}
+    {%- set max = property.maximum or property.exclusiveMaximum -%}
+    {%- if (min is defined and min is not none) or (max is defined and max is not none) -%}
+        {%- if min is defined and min is not none and max is defined and max is not none and min >= -3.40282347 and max <= 3.40282347 -%}float{%- else -%}double{%- endif -%}
+    {%- else -%}double{%- endif -%}{% if name not in required %}_null{% endif %}
+{% elif property.enum %}enumeration{% if name not in required %}_null{% endif %}
+{% else %}string{% if name not in required %}_null{% endif %}
+{% endif %}
+{%- endfilter -%}
+{%- endmacro %}
+
+{%- macro is_relation(property) -%}{% if property.type == 'relation' %}true{% else %}false{% endif %}{%- endmacro %}
+{%- macro relation_has_fk(property) -%}{% if property.type == 'relation' and (property.relation == 'manyToOne' or (property.relation == 'oneToOne' and not property.mappedBy)) %}true{% else %}false{% endif %}{%- endmacro %}
+{%- macro relation_cardinality(property) -%}{% if property.type == 'relation' %}{{ property.relation }}{% else %}none{% endif %}{%- endmacro %}
+{%- macro relation_target(property) -%}{% if property.type == 'relation' %}{{ property.target }}{% endif %}{%- endmacro %}
+{%- macro relation_inverse(property) -%}{% if property.type == 'relation' and property.inversedBy %}{{ property.inversedBy }}{% endif %}{%- endmacro %}
+{%- macro relation_mapped(property) -%}{% if property.type == 'relation' and property.mappedBy %}{{ property.mappedBy }}{% endif %}{%- endmacro %}
+{%- macro relation_required(property) -%}{% if property.type == 'relation' and property.required %}true{% else %}false{% endif %}{%- endmacro %}
+{%- macro relation_is_bidirectional(property) -%}{% if property.type == 'relation' and (property.inversedBy or property.mappedBy) %}true{% else %}false{% endif %}{%- endmacro %}
+
+{%- macro relation_is_many_to_many(property) -%}{% if property.type == 'relation' and property.relation == 'manyToMany' %}true{% else %}false{% endif %}{%- endmacro %}
+{%- macro relation_is_many_to_one(property) -%}{% if property.type == 'relation' and property.relation == 'manyToOne' %}true{% else %}false{% endif %}{%- endmacro %}
+{%- macro relation_is_one_to_many(property) -%}{% if property.type == 'relation' and property.relation == 'oneToMany' %}true{% else %}false{% endif %}{%- endmacro %}
+{%- macro relation_is_one_to_one(property) -%}{% if property.type == 'relation' and property.relation == 'oneToOne' %}true{% else %}false{% endif %}{%- endmacro %}
+
+{%- macro get_relation(property) -%}{% if property.type == 'relation' %}{{ property.target }}{% endif %}{%- endmacro %}
+{%- macro get_relation_type(property) -%}{% if property.type == 'relation' %}{{ property.relation }}{% endif %}{%- endmacro %}
+
+{%- macro m2m_junction_table(entity_name, property) -%}
+{% if relation_is_many_to_many(property)=='true' %}{{ [ property.mappedBy|pascal_case, property.target|pascal_case ] | sort | join('_') | trim }}{% endif %}
+{%- endmacro %}
+
+{%- macro relation_meta(property) -%}
+{% if property.type == 'relation' %}{"cardinality":"{{ property.relation }}","target":"{{ property.target }}","inverse":"{{ property.inversedBy or '' }}","mapped":"{{ property.mappedBy or '' }}","bidirectional":{{ relation_is_bidirectional(property) }},"required":{{ relation_required(property) }}}{% endif %}
+{%- endmacro %}
+
+{# ---------------- Entity-level helpers ---------------- #}
+{%- macro get_all_relations(entity) -%}
+{{ entity.attributes | items | selectattr('1.type','equalto','relation') | map(attribute='1.target') | unique | sort | join(',') }}
+{%- endmacro %}
+
+{%- macro get_m2m_relations(entities) -%}
+{% set ns = namespace(m2m=[]) %}
+{% for entity_name, entity in entities|items %}
+    {% for name, property in entity.attributes|items %}
+        {% if relation_is_many_to_many(property)=='true' %}
+            {% set join_name = m2m_junction_table(entity_name, property) %}
+            {% set ns.m2m = ns.m2m + [join_name] %}
+        {% endif %}
+    {% endfor %}
+{% endfor %}
+{{ ns.m2m | unique | join(',') | trim}}
+{%- endmacro %}
+
+{%- macro get_m21_relations(entity) -%}
+{% set rels = [] %}
+{% for name, property in entity.attributes|items %}
+    {% if relation_is_many_to_one(property)=='true' %}{% set rels = rels + [property.target] %}{% endif %}
+{% endfor %}
+{{ rels | unique | sort | join(',') }}
+{%- endmacro %}
+
+{%- macro has_many_to_one_relation(entity) -%}
+{% for name, property in entity.attributes|items %}{% if relation_is_many_to_one(property)=='true' %}true{% break %}{% endif %}{% endfor %}
+{%- endmacro %}
+
+{%- macro has_many_to_many_relation(entity) -%}
+{% for name, property in entity.attributes|items %}{% if relation_is_many_to_many(property)=='true' %}true{% break %}{% endif %}{% endfor %}
+{%- endmacro %}
+
+{%- macro has_one_to_many_relation(entity) -%}
+{% for name, property in entity.attributes|items %}{% if relation_is_one_to_many(property)=='true' %}true{% break %}{% endif %}{% endfor %}
+{%- endmacro %}
+
+{%- macro get_m21_relations_type(entity) -%}
+{% set rels = [] %}
+{% for name, property in entity.attributes|items %}{% if relation_is_many_to_one(property)=='true' %}{% set rels = rels + [property.target] %}{% endif %}{% endfor %}
+{{ rels | join(',') }}
+{%- endmacro %}
+
+{%- macro m21_relation_equal_name(name,property) -%}{% if relation_is_many_to_one(property)=='true' and property.target|snake_case == name|snake_case %}true{% else %}false{% endif %}{%- endmacro %}
+
+{%- macro is_enum(property) -%}{% if property.enum and property.enum|length > 0 %}true{% else %}false{% endif %}{%- endmacro %}
