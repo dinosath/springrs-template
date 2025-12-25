@@ -1,0 +1,189 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+{% if database == 'postgres' -%}
+use testcontainers::ContainerAsync;
+use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
+{% endif -%}
+use tokio::process::{Child, Command};
+use tokio::sync::OnceCell;
+use tonic::transport::Channel;
+
+/// Shared test context that is initialized once and reused across all tests
+/// We use a raw pointer to leaked memory to ensure the context lives forever
+static SHARED_CONTEXT: OnceCell<&'static SharedTestContext> = OnceCell::const_new();
+
+/// Internal context holding the containers and server process
+/// This is kept alive for the duration of all tests
+struct SharedTestContext {
+{% if database == 'postgres' -%}
+    #[allow(dead_code)]
+    postgres_container: ContainerAsync<Postgres>,
+{% endif -%}
+    #[allow(dead_code)]
+    database_url: String,
+    grpc_url: String,
+    #[allow(dead_code)]
+    app_process: Child,
+}
+
+/// Public test context that provides access to shared resources
+pub struct TestContext {
+    inner: &'static SharedTestContext,
+    channel: Channel,
+}
+
+impl TestContext {
+    /// Get or initialize the shared test context
+    /// This ensures containers and server are only started once
+    pub async fn new() -> Self {
+        let inner = SHARED_CONTEXT
+            .get_or_init(|| async {
+                // Leak the box to get a 'static reference
+                // This ensures the context lives for the entire test run
+                let ctx = SharedTestContext::initialize().await;
+                let leaked: &'static mut SharedTestContext = Box::leak(Box::new(ctx));
+                leaked as &'static SharedTestContext
+            })
+            .await;
+
+        // Create a fresh channel for each test to avoid connection issues
+        let channel = Channel::from_shared(inner.grpc_url.clone())
+            .expect("Invalid gRPC URL")
+            .connect()
+            .await
+            .expect("Failed to connect to gRPC server");
+
+        Self { inner: *inner, channel }
+    }
+
+    /// Get the gRPC channel for making requests
+    pub fn channel(&self) -> Channel {
+        self.channel.clone()
+    }
+
+    /// Get the database URL
+    #[allow(dead_code)]
+    pub fn database_url(&self) -> &str {
+        &self.inner.database_url
+    }
+
+    /// Get the gRPC server URL (e.g., http://127.0.0.1:12345)
+    #[allow(dead_code)]
+    pub fn grpc_url(&self) -> &str {
+        &self.inner.grpc_url
+    }
+}
+
+impl SharedTestContext {
+    async fn initialize() -> Self {
+        println!("🚀 Initializing shared gRPC test context...");
+
+{% if database == 'postgres' -%}
+        // Start Postgres container
+        println!("🐘 Starting Postgres container...");
+        let postgres_container = Postgres::default()
+            .start()
+            .await
+            .expect("Failed to start Postgres container");
+
+        let postgres_port = postgres_container
+            .get_host_port_ipv4(5432)
+            .await
+            .expect("Failed to get Postgres port");
+
+        let database_url = format!(
+            "postgres://postgres:postgres@127.0.0.1:{}/postgres",
+            postgres_port
+        );
+        println!("✅ Postgres container started on port {}", postgres_port);
+{% endif -%}
+
+        // Start the gRPC application server
+        let (app_process, grpc_url) = Self::start_grpc_server(&database_url).await;
+
+        println!("🎉 Shared gRPC test context initialized successfully!");
+
+        Self {
+{% if database == 'postgres' -%}
+            postgres_container,
+{% endif -%}
+            database_url,
+            grpc_url,
+            app_process,
+        }
+    }
+
+    async fn start_grpc_server(database_url: &str) -> (Child, String) {
+        println!("🖥️  Starting gRPC application server...");
+        println!("📍 Using DATABASE_URL: {}", database_url);
+
+        // Find an available port by binding to port 0
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to find available port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener); // Release the port so the server can use it
+        
+        println!("📍 Using port: {}", port);
+        let grpc_url = format!("http://127.0.0.1:{}", port);
+
+        // Build the binary first to avoid compilation during server start
+        let build_status = std::process::Command::new("cargo")
+            .args(["build", "--release"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .expect("Failed to build application");
+        
+        if !build_status.success() {
+            panic!("Failed to build application");
+        }
+        println!("✅ Application built successfully");
+
+        // Now run the built binary directly
+        let binary_path = format!("{}/target/release/{{ project_name | snake_case }}", env!("CARGO_MANIFEST_DIR"));
+        let mut cmd = Command::new(&binary_path);
+        cmd.env("DATABASE_URL", database_url)
+            .env("PORT", port.to_string())
+            .env("RUST_LOG", "info")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true);
+
+        let child = cmd.spawn().expect("Failed to start gRPC application");
+
+        // Wait for the gRPC server to be ready
+        println!("⏳ Waiting for gRPC server to be ready at {}...", grpc_url);
+        let mut retries = 60;
+        let mut server_ready = false;
+        
+        while retries > 0 && !server_ready {
+            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+
+            // Try to connect to the gRPC server
+            match Channel::from_shared(grpc_url.clone())
+                .expect("Invalid URL")
+                .connect()
+                .await
+            {
+                Ok(_ch) => {
+                    println!("   gRPC server responding!");
+                    server_ready = true;
+                }
+                Err(_) => {
+                    // Server not up yet, keep trying
+                }
+            }
+
+            retries -= 1;
+            if retries % 10 == 0 && !server_ready {
+                println!("   Still waiting... ({} seconds remaining)", retries / 4);
+            }
+        }
+
+        if !server_ready {
+            panic!("gRPC server failed to start within 15 seconds");
+        }
+        println!("✅ gRPC server is ready at {}!", grpc_url);
+        
+        (child, grpc_url)
+    }
+}

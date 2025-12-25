@@ -1,2 +1,11 @@
 templates
 templates/**
+!templates/helm
+!templates/helm/**
+macros.jinja
+.idea
+.github
+sample/**
+sample
+generated
+generated/**

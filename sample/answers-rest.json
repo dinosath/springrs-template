@@ -1,0 +1,275 @@
+{
+    "project_name": "sample_app",
+    "project_author": "Template Tester",
+    "project_version": "0.1.0",
+    "project_edition": "2021",
+    "authentication": "none",
+    "database": "postgres",
+    "use_sqlx_migrations": true,
+    "features": ["open-telemetry", "helm"],
+    "protocol": "rest",
+    "static_includes": [],
+    "entities": {
+        "Profile": {
+            "kind": "collectionType",
+            "collectionName": "profiles",
+            "priority": 1,
+            "info": {
+                "displayName": "Profile",
+                "singularName": "profile",
+                "pluralName": "profiles",
+                "description": "Author profile with additional details"
+            },
+            "attributes": {
+                "avatar_url": {
+                    "type": "string",
+                    "required": false,
+                    "maxLength": 500
+                },
+                "website": {
+                    "type": "string",
+                    "required": false,
+                    "maxLength": 255
+                },
+                "twitter_handle": {
+                    "type": "string",
+                    "required": false,
+                    "maxLength": 50
+                },
+                "github_handle": {
+                    "type": "string",
+                    "required": false,
+                    "maxLength": 50
+                },
+                "location": {
+                    "type": "string",
+                    "required": false,
+                    "maxLength": 100
+                }
+            }
+        },
+        "Author": {
+            "kind": "collectionType",
+            "collectionName": "authors",
+            "priority": 2,
+            "info": {
+                "displayName": "Author",
+                "singularName": "author",
+                "pluralName": "authors",
+                "description": "Content authors"
+            },
+            "attributes": {
+                "name": {
+                    "type": "string",
+                    "required": true,
+                    "maxLength": 100
+                },
+                "email": {
+                    "type": "string",
+                    "required": true,
+                    "unique": true,
+                    "format": "email",
+                    "maxLength": 255
+                },
+                "bio": {
+                    "type": "text",
+                    "required": false
+                },
+                "profile": {
+                    "type": "relation",
+                    "relation": "oneToOne",
+                    "target": "Profile",
+                    "required": false,
+                    "mappedBy": "author"
+                }
+            }
+        },
+        "Category": {
+            "kind": "collectionType",
+            "collectionName": "categories",
+            "priority": 1,
+            "info": {
+                "displayName": "Category",
+                "singularName": "category",
+                "pluralName": "categories",
+                "description": "Categories for organizing articles"
+            },
+            "attributes": {
+                "name": {
+                    "type": "string",
+                    "required": true,
+                    "unique": true,
+                    "maxLength": 100
+                },
+                "slug": {
+                    "type": "string",
+                    "required": true,
+                    "unique": true,
+                    "maxLength": 100
+                },
+                "description": {
+                    "type": "text",
+                    "required": false
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "required": true,
+                    "default": true
+                },
+                "articles": {
+                    "type": "relation",
+                    "relation": "oneToMany",
+                    "target": "Article",
+                    "required": false,
+                    "mappedBy": "category"
+                }
+            }
+        },
+        "Tag": {
+            "kind": "collectionType",
+            "collectionName": "tags",
+            "priority": 1,
+            "info": {
+                "displayName": "Tag",
+                "singularName": "tag",
+                "pluralName": "tags",
+                "description": "Tags for labeling articles"
+            },
+            "attributes": {
+                "name": {
+                    "type": "string",
+                    "required": true,
+                    "unique": true,
+                    "maxLength": 50
+                },
+                "color": {
+                    "type": "string",
+                    "required": false,
+                    "maxLength": 7
+                },
+                "articles": {
+                    "type": "relation",
+                    "relation": "manyToMany",
+                    "target": "Article",
+                    "required": false,
+                    "mappedBy": "tag"
+                }
+            }
+        },
+        "Article": {
+            "kind": "collectionType",
+            "collectionName": "articles",
+            "priority": 3,
+            "info": {
+                "displayName": "Article",
+                "singularName": "article",
+                "pluralName": "articles",
+                "description": "Blog articles"
+            },
+            "attributes": {
+                "title": {
+                    "type": "string",
+                    "required": true,
+                    "maxLength": 255
+                },
+                "slug": {
+                    "type": "string",
+                    "required": true,
+                    "unique": true,
+                    "maxLength": 255
+                },
+                "content": {
+                    "type": "text",
+                    "required": true
+                },
+                "excerpt": {
+                    "type": "text",
+                    "required": false,
+                    "maxLength": 500
+                },
+                "status": {
+                    "type": "enumeration",
+                    "required": true,
+                    "enum": ["draft", "published", "archived"],
+                    "default": "draft"
+                },
+                "published_at": {
+                    "type": "datetime",
+                    "required": false
+                },
+                "view_count": {
+                    "type": "integer",
+                    "required": true,
+                    "default": 0,
+                    "minimum": 0
+                },
+                "is_featured": {
+                    "type": "boolean",
+                    "required": true,
+                    "default": false
+                },
+                "category": {
+                    "type": "relation",
+                    "relation": "manyToOne",
+                    "target": "Category",
+                    "required": true,
+                    "mappedBy": "article"
+                },
+                "author": {
+                    "type": "relation",
+                    "relation": "manyToOne",
+                    "target": "Author",
+                    "required": true,
+                    "mappedBy": "article"
+                },
+                "tags": {
+                    "type": "relation",
+                    "relation": "manyToMany",
+                    "target": "Tag",
+                    "required": false,
+                    "mappedBy": "article"
+                }
+            }
+        },
+        "Comment": {
+            "kind": "collectionType",
+            "collectionName": "comments",
+            "priority": 4,
+            "info": {
+                "displayName": "Comment",
+                "singularName": "comment",
+                "pluralName": "comments",
+                "description": "Article comments"
+            },
+            "attributes": {
+                "content": {
+                    "type": "text",
+                    "required": true
+                },
+                "author_name": {
+                    "type": "string",
+                    "required": true,
+                    "maxLength": 100
+                },
+                "author_email": {
+                    "type": "string",
+                    "required": true,
+                    "format": "email",
+                    "maxLength": 255
+                },
+                "is_approved": {
+                    "type": "boolean",
+                    "required": true,
+                    "default": false
+                },
+                "article": {
+                    "type": "relation",
+                    "relation": "manyToOne",
+                    "target": "Article",
+                    "required": true,
+                    "mappedBy": "comment"
+                }
+            }
+        }
+    }
+}

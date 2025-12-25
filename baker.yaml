@@ -1,6 +1,14 @@
 schemaVersion: v1
+import_root: "templates"
 template_globs:
   - "**/*.jinja"
+  - "*.jinja"
+exclude_globs:
+  - "generated/**"
+  - "generated-*/**"
+  - "sample/**"
+  - ".git/**"
+  - "target/**"
 
 questions:
   project_name:
@@ -22,62 +30,88 @@ questions:
     help: Please enter the edition of the project
     default: "2021"
 
+  authentication:
+    type: str
+    help: What authentication method do you want to use?
+    default: none
+    choices:
+      - jwt
+      - oidc
+      - none
+
+  database:
+    type: str
+    help: What database do you want to use?
+    default: postgres
+    choices:
+      - postgres
+
+  use_sqlx_migrations:
+    type: bool
+    help: Do you want to use sqlx migrations?
+    default: false
+    ask_if: database == 'postgres'
+
+  db_schema:
+    type: str
+    help: What PostgreSQL schema should tables be created in?
+    default: public
+    ask_if: database == 'postgres'
+
+  id_type:
+    type: str
+    help: What type should primary keys use?
+    default: integer
+    choices:
+      - integer
+      - uuid
+      - big_integer
+
   features:
     type: str
     help: What features do you want to enable?
     multiselect: true
     default:
-      - grpc
-      - sea-orm
       - open-telemetry
     choices:
-      - grpc
-      - rest
-      - sea-orm
       - open-telemetry
+      - helm
+
+  protocol:
+    type: str
+    help: What protocol to generate the API with?
+    default: rest
+    choices:
+      - rest
+      - grpc
+
+  frontend:
+    type: str
+    help: What frontend do you want to generate?
+    default: none
+    choices:
+      - shadcn-admin-kit
+      - none
+
+  crudcrate:
+    type: bool
+    help: Do you want to use crudcrate for generation of rest controllers?
+    default: false
+    ask_if: protocol == 'rest'
+
+  ci_cd:
+    type: str
+    help: What scripts for CI/CD do you want to generate?
+    multiselect: true
+    default:
+      - github
+    choices:
+      - github
 
   entities:
     type: json
     help: Configure your entities
-    schema: |
-        {
-          "type": "object",
-          "patternProperties": {
-            "^.+$": {
-              "$ref": "https://json-schema.org/draft/2020-12/schema"
-            }
-          },
-          "additionalProperties": false
-        }
+    schema_file: "templates/strapi.schema.json"
     default: |
       {
-        "user": {
-            "$id": "https://example.com/user-profile.schema.json",
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "description": "A representation of a user profile",
-            "type": "object",
-            "required": [
-                "username",
-                "email"
-            ],
-            "properties": {
-                "username": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string",
-                    "format": "email"
-                },
-                "fullName": {
-                    "type": "string"
-                },
-                "age": {
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "location": {
-                    "type": "string"
-                }
-            }
-        }
       }

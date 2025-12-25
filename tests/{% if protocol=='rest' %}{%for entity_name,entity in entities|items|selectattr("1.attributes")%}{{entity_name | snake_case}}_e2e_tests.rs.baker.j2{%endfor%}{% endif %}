@@ -1,0 +1,738 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+#[macro_use]
+mod common;
+
+use common::{TestContext, ResponseDetails};
+use serde_json::json;
+use serial_test::serial;
+
+{# Check if entity has required manyToOne or oneToOne relations #}
+{% set ns = namespace(has_required_relations=false, has_required_fields=false) -%}
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') -%}
+{% set ns.has_required_relations = true -%}
+{% endif -%}
+{% if property.required and not property.readOnly and property.type != 'relation' -%}
+{% set ns.has_required_fields = true -%}
+{% endif -%}
+{% endfor -%}
+
+{% if ns.has_required_relations -%}
+/// Helper to create required related entities before the main entity
+async fn setup_required_relations(ctx: &TestContext) -> serde_json::Map<String, serde_json::Value> {
+    let mut relation_ids = serde_json::Map::new();
+
+{# First pass: Create all nested leaf entities (entities that the parent relations depend on) #}
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') -%}
+{% set target_entity = entities[property.target] -%}
+{% if target_entity and target_entity.attributes -%}
+{% for nested_name, nested_prop in target_entity.attributes | items -%}
+{% if nested_prop.type == 'relation' and nested_prop.required and (nested_prop.relation == 'manyToOne' or nested_prop.relation == 'oneToOne') -%}
+{% set nested_target = entities[nested_prop.target] -%}
+    // Create {{ nested_prop.target }} (required by {{ property.target }})
+    let {{ nested_prop.target | snake_case }}_for_{{ property.target | snake_case }}_payload = json!({
+{% if nested_target and nested_target.attributes -%}
+{% for attr_name, attr_prop in nested_target.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+        "{{ attr_name | snake_case }}": "{{ nested_prop.target | snake_case }}_for_{{ property.target | snake_case }}_test@example.com",
+{% else -%}
+        "{{ attr_name | snake_case }}": "Test {{ nested_prop.target }} {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+        "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+        "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+        "{{ attr_name | snake_case }}": "Test {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+        "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+{% endif %}
+    });
+
+    let response = ctx
+        .client()
+        .post(&format!("{}/api/{{ nested_target.info.pluralName | default(nested_prop.target | plural | snake_case) }}", ctx.base_url()))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&{{ nested_prop.target | snake_case }}_for_{{ property.target | snake_case }}_payload)
+        .send()
+        .await
+        .expect("Failed to send request to create {{ nested_prop.target }}");
+
+    let status = response.status();
+    let body_text = response.text().await.expect("Failed to read {{ nested_prop.target }} response body");
+    
+    if !status.is_success() {
+        panic!(
+            "Failed to create {{ nested_prop.target }} (status {}): {}\nPayload: {}",
+            status,
+            body_text,
+            serde_json::to_string_pretty(&{{ nested_prop.target | snake_case }}_for_{{ property.target | snake_case }}_payload).unwrap()
+        );
+    }
+    
+    let created: serde_json::Value = serde_json::from_str(&body_text)
+        .expect("Failed to parse {{ nested_prop.target }} response as JSON");
+    relation_ids.insert("{{ nested_name | snake_case }}_for_{{ property.target | snake_case }}_id".to_string(), created["id"].clone());
+
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+{% endif -%}
+{% endfor %}
+{# Second pass: Create the direct parent entities with their nested relations #}
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') -%}
+{% set target_entity = entities[property.target] -%}
+{# Check if target entity has required nested relations #}
+{% set target_has_nested = namespace(value=false) -%}
+{% if target_entity and target_entity.attributes -%}
+{% for nested_name, nested_prop in target_entity.attributes | items -%}
+{% if nested_prop.type == 'relation' and nested_prop.required and (nested_prop.relation == 'manyToOne' or nested_prop.relation == 'oneToOne') -%}
+{% set target_has_nested.value = true -%}
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+    // Create required {{ property.target }}
+{% if target_has_nested.value %}
+    let mut {{ property.target | snake_case }}_payload = json!({
+{% else %}
+    let {{ property.target | snake_case }}_payload = json!({
+{% endif %}
+{% if target_entity and target_entity.attributes -%}
+{% for attr_name, attr_prop in target_entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+        "{{ attr_name | snake_case }}": "{{ property.target | snake_case }}_test@example.com",
+{% else -%}
+        "{{ attr_name | snake_case }}": "Test {{ property.target }} {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+        "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+        "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+        "{{ attr_name | snake_case }}": "Test {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+        "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+{% endif %}
+    });
+{% if target_has_nested.value %}
+    // Add nested required relations to {{ property.target }}
+{% if target_entity and target_entity.attributes -%}
+{% for nested_name, nested_prop in target_entity.attributes | items -%}
+{% if nested_prop.type == 'relation' and nested_prop.required and (nested_prop.relation == 'manyToOne' or nested_prop.relation == 'oneToOne') -%}
+    if let Some(id) = relation_ids.get("{{ nested_name | snake_case }}_for_{{ property.target | snake_case }}_id") {
+        {{ property.target | snake_case }}_payload["{{ nested_name | snake_case }}"] = json!({ "id": id.clone() });
+    }
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+{% endif %}
+
+    let response = ctx
+        .client()
+        .post(&format!("{}/api/{{ target_entity.info.pluralName | default(property.target | plural | snake_case) }}", ctx.base_url()))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&{{ property.target | snake_case }}_payload)
+        .send()
+        .await
+        .expect("Failed to send request to create {{ property.target }}");
+
+    let status = response.status();
+    let body_text = response.text().await.expect("Failed to read {{ property.target }} response body");
+    
+    if !status.is_success() {
+        panic!(
+            "Failed to create {{ property.target }} (status {}): {}\nPayload: {}",
+            status,
+            body_text,
+            serde_json::to_string_pretty(&{{ property.target | snake_case }}_payload).unwrap()
+        );
+    }
+    
+    let created: serde_json::Value = serde_json::from_str(&body_text)
+        .expect("Failed to parse {{ property.target }} response as JSON");
+    relation_ids.insert("{{ name | snake_case }}_id".to_string(), created["id"].clone());
+
+{% endif -%}
+{% endfor %}
+    relation_ids
+}
+
+/// Helper to cleanup required related entities after test
+async fn cleanup_required_relations(ctx: &TestContext, relation_ids: &serde_json::Map<String, serde_json::Value>) {
+{# Clean up main relations first #}
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') %}
+    if let Some(id) = relation_ids.get("{{ name | snake_case }}_id") {
+        let _ = ctx
+            .client()
+            .delete(&format!("{}/api/{{ entities[property.target].info.pluralName | default(property.target | plural | snake_case) }}/{}", ctx.base_url(), id))
+{% if authentication != 'none' -%}
+            .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+            .send()
+            .await;
+    }
+{% endif -%}
+{% endfor %}
+{# Clean up nested relations #}
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') -%}
+{% set target_entity = entities[property.target] -%}
+{% if target_entity and target_entity.attributes -%}
+{% for nested_name, nested_prop in target_entity.attributes | items -%}
+{% if nested_prop.type == 'relation' and nested_prop.required and (nested_prop.relation == 'manyToOne' or nested_prop.relation == 'oneToOne') -%}
+{% set nested_target = entities[nested_prop.target] -%}
+    if let Some(id) = relation_ids.get("{{ nested_name | snake_case }}_for_{{ property.target | snake_case }}_id") {
+        let _ = ctx
+            .client()
+            .delete(&format!("{}/api/{{ nested_target.info.pluralName | default(nested_prop.target | plural | snake_case) }}/{}", ctx.base_url(), id))
+{% if authentication != 'none' -%}
+            .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+            .send()
+            .await;
+    }
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+{% endif -%}
+{% endfor %}
+}
+
+{% endif -%}
+/// Test fixture data for {{ entity_name | pascal_case }}
+fn create_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}relation_ids: &serde_json::Map<String, serde_json::Value>{% endif %}) -> serde_json::Value {
+{% if ns.has_required_relations -%}
+    let mut payload = json!({
+{% else -%}
+    json!({
+{% endif -%}
+{% for name, property in entity.attributes | items -%}
+{% if not property.readOnly and macros.is_relation(property) != 'true' -%}
+{% if property.type == 'string' -%}
+{% if property.format == 'email' -%}
+        "{{ name | snake_case }}": "test@example.com"{% if not loop.last %},{% endif %}
+{% elif property.format == 'uuid' -%}
+        "{{ name | snake_case }}": "550e8400-e29b-41d4-a716-446655440000"{% if not loop.last %},{% endif %}
+{% elif property.format == 'url' -%}
+        "{{ name | snake_case }}": "https://example.com"{% if not loop.last %},{% endif %}
+{% elif property.format == 'date-time' -%}
+        "{{ name | snake_case }}": "2024-01-15T10:30:00Z"{% if not loop.last %},{% endif %}
+{% elif property.format == 'date' -%}
+        "{{ name | snake_case }}": "2024-01-15"{% if not loop.last %},{% endif %}
+{% elif property.format == 'time' -%}
+        "{{ name | snake_case }}": "10:30:00"{% if not loop.last %},{% endif %}
+{% else -%}
+        "{{ name | snake_case }}": "Test {{ name | title }}"{% if not loop.last %},{% endif %}
+{% endif -%}
+{% elif property.type == 'integer' -%}
+        "{{ name | snake_case }}": {{ property.default | default(1) }}{% if not loop.last %},{% endif %}
+{% elif property.type == 'number' -%}
+        "{{ name | snake_case }}": {{ property.default | default(1.0) }}{% if not loop.last %},{% endif %}
+{% elif property.type == 'boolean' -%}
+        "{{ name | snake_case }}": {{ property.default | default('true') | lower }}{% if not loop.last %},{% endif %}
+{% elif property.type == 'enumeration' or property.enum -%}
+        "{{ name | snake_case }}": "{{ property.enum[0] | default('default') | pascal_case }}"{% if not loop.last %},{% endif %}
+{% elif property.type == 'text' -%}
+        "{{ name | snake_case }}": "Test {{ name | title }} content"{% if not loop.last %},{% endif %}
+{% endif -%}
+{% endif -%}
+{% endfor %}
+{% if ns.has_required_relations -%}
+    });
+    // Add required relations as nested objects with id
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') -%}
+    if let Some(id) = relation_ids.get("{{ name | snake_case }}_id") {
+        payload["{{ name | snake_case }}"] = json!({ "id": id.clone() });
+    }
+{% endif -%}
+{% endfor -%}
+    payload
+{% else -%}
+    })
+{% endif -%}
+}
+
+fn update_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}relation_ids: &serde_json::Map<String, serde_json::Value>{% endif %}) -> serde_json::Value {
+{% if ns.has_required_relations -%}
+    let mut payload = json!({
+{% else -%}
+    json!({
+{% endif -%}
+{% for name, property in entity.attributes | items -%}
+{% if not property.readOnly and macros.is_relation(property) != 'true' -%}
+{% if property.type == 'string' -%}
+{% if property.format == 'email' -%}
+        "{{ name | snake_case }}": "updated@example.com"{% if not loop.last %},{% endif %}
+{% elif property.format == 'uuid' -%}
+        "{{ name | snake_case }}": "660e8400-e29b-41d4-a716-446655440001"{% if not loop.last %},{% endif %}
+{% elif property.format == 'url' -%}
+        "{{ name | snake_case }}": "https://updated-example.com"{% if not loop.last %},{% endif %}
+{% elif property.format == 'date-time' -%}
+        "{{ name | snake_case }}": "2024-06-20T15:45:00Z"{% if not loop.last %},{% endif %}
+{% elif property.format == 'date' -%}
+        "{{ name | snake_case }}": "2024-06-20"{% if not loop.last %},{% endif %}
+{% elif property.format == 'time' -%}
+        "{{ name | snake_case }}": "15:45:00"{% if not loop.last %},{% endif %}
+{% else -%}
+        "{{ name | snake_case }}": "Updated {{ name | title }}"{% if not loop.last %},{% endif %}
+{% endif -%}
+{% elif property.type == 'integer' -%}
+        "{{ name | snake_case }}": {{ (property.default | default(1)) + 10 }}{% if not loop.last %},{% endif %}
+{% elif property.type == 'number' -%}
+        "{{ name | snake_case }}": {{ (property.default | default(1.0)) + 10.5 }}{% if not loop.last %},{% endif %}
+{% elif property.type == 'boolean' -%}
+        "{{ name | snake_case }}": {{ 'false' if property.default | default(true) else 'true' }}{% if not loop.last %},{% endif %}
+{% elif property.type == 'enumeration' or property.enum -%}
+        "{{ name | snake_case }}": "{{ property.enum[-1] | default(property.enum[0]) | default('updated') | pascal_case }}"{% if not loop.last %},{% endif %}
+{% elif property.type == 'text' -%}
+        "{{ name | snake_case }}": "Updated {{ name | title }} content"{% if not loop.last %},{% endif %}
+{% endif -%}
+{% endif -%}
+{% endfor %}
+{% if ns.has_required_relations -%}
+    });
+    // Add required relations as nested objects with id
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' and property.required and (property.relation == 'manyToOne' or property.relation == 'oneToOne') -%}
+    if let Some(id) = relation_ids.get("{{ name | snake_case }}_id") {
+        payload["{{ name | snake_case }}"] = json!({ "id": id.clone() });
+    }
+{% endif -%}
+{% endfor -%}
+    payload
+{% else -%}
+    })
+{% endif -%}
+}
+
+#[tokio::test]
+#[serial]
+async fn test_{{ entity_name | snake_case }}_crud_operations() {
+    let ctx = TestContext::new().await;
+    let base_url = format!("{}/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}", ctx.base_url());
+
+{% if ns.has_required_relations -%}
+    // Setup required relations first
+    let relation_ids = setup_required_relations(&ctx).await;
+
+{% endif -%}
+    // CREATE - Create a new {{ entity_name | snake_case }}
+    let create_payload = create_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}&relation_ids{% endif %});
+
+    let create_response = ctx
+        .client()
+        .post(&base_url)
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&create_payload)
+        .send()
+        .await
+        .expect("Failed to create {{ entity_name | snake_case }}");
+
+    let (create_details, created_{{ entity_name | snake_case }}) = ResponseDetails::capture(create_response, Some(&create_payload)).await;
+    assert_status!(create_details, 201, "Expected 201 Created status");
+
+    let {{ entity_name | snake_case }}_id = created_{{ entity_name | snake_case }}["id"]
+        .as_{{ 'str().expect("No {{ entity_name | snake_case }} ID").to_string()' if id_type == 'uuid' else 'i64().expect("No {{ entity_name | snake_case }} ID")' }};
+
+{% for name, property in entity.attributes | items -%}
+{% if not property.readOnly and macros.is_relation(property) != 'true' and property.required -%}
+{% if property.type == 'string' -%}
+{% if property.format == 'email' -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "test@example.com");
+{% elif property.format == 'uuid' -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "550e8400-e29b-41d4-a716-446655440000");
+{% elif property.format == 'url' -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "https://example.com");
+{% else -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "Test {{ name | title }}");
+{% endif -%}
+{% elif property.type == 'integer' -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], {{ property.default | default(1) }});
+{% elif property.type == 'boolean' -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], {{ property.default | default('true') | lower }});
+{% elif property.type == 'enumeration' or property.enum -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "{{ property.enum[0] | default('default') | pascal_case }}");
+{% elif property.type == 'text' -%}
+    assert_eq!(created_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "Test {{ name | title }} content");
+{% endif -%}
+{% endif -%}
+{% endfor %}
+
+    // READ - Get the created {{ entity_name | snake_case }}
+    let read_response = ctx
+        .client()
+        .get(&format!("{}/{}", base_url, {{ entity_name | snake_case }}_id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await
+        .expect("Failed to get {{ entity_name | snake_case }}");
+
+    let (read_details, read_{{ entity_name | snake_case }}) = ResponseDetails::capture(read_response, None).await;
+    assert_status!(read_details, 200, "Expected 200 OK status for GET");
+
+{% if id_type == 'uuid' -%}
+    assert_eq!(read_{{ entity_name | snake_case }}["id"], format!("{}", {{ entity_name | snake_case }}_id).as_str());
+{% else -%}
+    assert_eq!(read_{{ entity_name | snake_case }}["id"], {{ entity_name | snake_case }}_id);
+{% endif -%}
+
+    // LIST - Get all {{ entity.info.pluralName | default(entity_name | plural | snake_case) }}
+    let list_response = ctx
+        .client()
+        .get(&base_url)
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await
+        .expect("Failed to list {{ entity.info.pluralName | default(entity_name | plural | snake_case) }}");
+
+    let (list_details, {{ entity_name | plural | snake_case }}) = ResponseDetails::capture(list_response, None).await;
+    assert_status!(list_details, 200, "Expected 200 OK status for LIST");
+
+    assert!({{ entity_name | plural | snake_case }}.as_array().expect("Response should be an array").len() > 0);
+
+    // UPDATE - Update the {{ entity_name | snake_case }}
+    let update_payload = update_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}&relation_ids{% endif %});
+
+    let update_response = ctx
+        .client()
+        .put(&format!("{}/{}", base_url, {{ entity_name | snake_case }}_id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&update_payload)
+        .send()
+        .await
+        .expect("Failed to update {{ entity_name | snake_case }}");
+
+    let (update_details, _updated_{{ entity_name | snake_case }}) = ResponseDetails::capture(update_response, Some(&update_payload)).await;
+    assert_status!(update_details, 200, "Expected 200 OK status for UPDATE");
+
+{% set has_updatable_asserts = entity.attributes | items | selectattr('1.required') | rejectattr('1.readOnly') | rejectattr('1.type', 'equalto', 'relation') | list | length > 0 -%}
+{% if has_updatable_asserts -%}
+{% for name, property in entity.attributes | items -%}
+{% if not property.readOnly and macros.is_relation(property) != 'true' and property.required -%}
+{% if property.type == 'string' -%}
+{% if property.format == 'email' -%}
+    assert_eq!(_updated_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "updated@example.com");
+{% elif property.format == 'uuid' -%}
+    assert_eq!(_updated_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "660e8400-e29b-41d4-a716-446655440001");
+{% elif property.format == 'url' -%}
+    assert_eq!(_updated_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "https://updated-example.com");
+{% else -%}
+    assert_eq!(_updated_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "Updated {{ name | title }}");
+{% endif -%}
+{% elif property.type == 'integer' -%}
+    assert_eq!(_updated_{{ entity_name | snake_case }}["{{ name | snake_case }}"], {{ (property.default | default(1)) + 10 }});
+{% elif property.type == 'text' -%}
+    assert_eq!(_updated_{{ entity_name | snake_case }}["{{ name | snake_case }}"], "Updated {{ name | title }} content");
+{% endif -%}
+{% endif -%}
+{% endfor %}
+{% endif -%}
+
+    // DELETE - Delete the {{ entity_name | snake_case }}
+    let delete_response = ctx
+        .client()
+        .delete(&format!("{}/{}", base_url, {{ entity_name | snake_case }}_id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await
+        .expect("Failed to delete {{ entity_name | snake_case }}");
+
+    let (delete_details, _) = ResponseDetails::capture(delete_response, None).await;
+    assert_status!(delete_details, 204, "Expected 204 No Content status for DELETE");
+
+    // Verify deletion - should return 404
+    let verify_response = ctx
+        .client()
+        .get(&format!("{}/{}", base_url, {{ entity_name | snake_case }}_id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await
+        .expect("Failed to verify deletion");
+
+    let (verify_details, _) = ResponseDetails::capture(verify_response, None).await;
+    assert_status!(verify_details, 404, "Expected 404 Not Found after deletion");
+
+{% if ns.has_required_relations -%}
+    // Cleanup required relations
+    cleanup_required_relations(&ctx, &relation_ids).await;
+{% endif -%}
+}
+
+{% if ns.has_required_fields or ns.has_required_relations -%}
+#[tokio::test]
+#[serial]
+async fn test_{{ entity_name | snake_case }}_validation() {
+    let ctx = TestContext::new().await;
+    let base_url = format!("{}/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}", ctx.base_url());
+
+    // Test creating {{ entity_name | snake_case }} without required fields
+    let invalid_payload = json!({});
+
+    let response = ctx
+        .client()
+        .post(&base_url)
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&invalid_payload)
+        .send()
+        .await
+        .expect("Failed to send request");
+
+    let (details, _) = ResponseDetails::capture(response, Some(&invalid_payload)).await;
+    assert_client_error!(details, "Expected client error for invalid payload");
+}
+{% endif -%}
+
+#[tokio::test]
+#[serial]
+async fn test_{{ entity_name | snake_case }}_not_found() {
+    let ctx = TestContext::new().await;
+    let base_url = format!("{}/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}", ctx.base_url());
+
+    // Try to get a non-existent {{ entity_name | snake_case }}
+{% if id_type == 'uuid' -%}
+    let non_existent_id = "00000000-0000-0000-0000-000000000000";
+{% else -%}
+    let non_existent_id = 999999;
+{% endif %}
+
+    let response = ctx
+        .client()
+        .get(&format!("{}/{}", base_url, non_existent_id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await
+        .expect("Failed to send request");
+
+    let (details, _) = ResponseDetails::capture(response, None).await;
+    assert_status!(details, 404, "Expected 404 for non-existent {{ entity_name | snake_case }}");
+}
+
+{% if authentication != 'none' -%}
+#[tokio::test]
+#[serial]
+async fn test_{{ entity_name | snake_case }}_unauthorized_access() {
+    let ctx = TestContext::new().await;
+    let base_url = format!("{}/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}", ctx.base_url());
+
+    // Test accessing without authorization header
+    let response = ctx
+        .client()
+        .get(&base_url)
+        .send()
+        .await
+        .expect("Failed to send request");
+
+    let (details, _) = ResponseDetails::capture(response, None).await;
+    assert!(
+        details.status == 401 || details.status == 403,
+        "{}Expected 401 Unauthorized or 403 Forbidden, got {}",
+        details.format_log(),
+        details.status
+    );
+}
+{% endif -%}
+
+#[tokio::test]
+#[serial]
+async fn test_{{ entity_name | snake_case }}_patch_operations() {
+    let ctx = TestContext::new().await;
+    let base_url = format!("{}/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}", ctx.base_url());
+
+{% if ns.has_required_relations -%}
+    // Setup required relations first
+    let relation_ids = setup_required_relations(&ctx).await;
+
+{% endif -%}
+    // First create a {{ entity_name | snake_case }}
+    let create_payload = create_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}&relation_ids{% endif %});
+
+    let create_response = ctx
+        .client()
+        .post(&base_url)
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&create_payload)
+        .send()
+        .await
+        .expect("Failed to create {{ entity_name | snake_case }}");
+
+    let (create_details, created) = ResponseDetails::capture(create_response, Some(&create_payload)).await;
+    assert_status!(create_details, 201, "Failed to create {{ entity_name | snake_case }} for patch test");
+    let id = created["id"].as_{{ 'str().expect("No ID").to_string()' if id_type == 'uuid' else 'i64().expect("No ID")' }};
+
+    // PATCH - Partial update
+{# Select first patchable non-relation attribute #}
+{% set first_attr = entity.attributes | items | selectattr('1.required') | rejectattr('1.readOnly') | rejectattr('1.type', 'equalto', 'relation') | first -%}
+{% if first_attr -%}
+{% set attr_name = first_attr[0] -%}
+{% set attr_property = first_attr[1] -%}
+{% if (attr_property.type == 'string' or attr_property.type == 'text') and attr_property.format != 'email' and attr_property.format != 'uuid' -%}
+    let patch_payload = json!({
+        "{{ attr_name | snake_case }}": "Patched {{ attr_name | title }}"
+    });
+{% elif attr_property.type == 'integer' -%}
+    let patch_payload = json!({
+        "{{ attr_name | snake_case }}": 999
+    });
+{% elif attr_property.type == 'boolean' -%}
+    let patch_payload = json!({
+        "{{ attr_name | snake_case }}": true
+    });
+{% else -%}
+    let patch_payload = json!({
+        "{{ attr_name | snake_case }}": "patched_value"
+    });
+{% endif -%}
+{% else -%}
+    let patch_payload = json!({});
+{% endif %}
+
+    let patch_response = ctx
+        .client()
+        .patch(&format!("{}/{}", base_url, id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .json(&patch_payload)
+        .send()
+        .await
+        .expect("Failed to patch {{ entity_name | snake_case }}");
+
+    let (patch_details, _patched) = ResponseDetails::capture(patch_response, Some(&patch_payload)).await;
+    assert_status!(patch_details, 200, "Expected 200 OK status for PATCH");
+
+{% if first_attr and (attr_property.type == 'string' or attr_property.type == 'text') and attr_property.format != 'email' and attr_property.format != 'uuid' -%}
+    assert_eq!(_patched["{{ attr_name | snake_case }}"], "Patched {{ attr_name | title }}");
+{% endif %}
+
+    // Clean up
+    let _ = ctx
+        .client()
+        .delete(&format!("{}/{}", base_url, id))
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await;
+
+{% if ns.has_required_relations -%}
+    // Cleanup required relations
+    cleanup_required_relations(&ctx, &relation_ids).await;
+{% endif -%}
+}
+
+#[tokio::test]
+#[serial]
+async fn test_{{ entity_name | snake_case }}_bulk_operations() {
+    let ctx = TestContext::new().await;
+    let base_url = format!("{}/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}", ctx.base_url());
+
+{% if ns.has_required_relations -%}
+    // Setup required relations first
+    let relation_ids = setup_required_relations(&ctx).await;
+
+{% endif -%}
+    // Create multiple {{ entity.info.pluralName | default(entity_name | plural | snake_case) }}
+    let mut created_ids: Vec<{{ rust_types.rust_id_type(id_type) | trim }}> = Vec::new();
+
+{% set has_unique_fields = entity.attributes | items | selectattr('1.unique') | selectattr('1.type', 'equalto', 'string') | list | length > 0 -%}
+    for {% if has_unique_fields %}i{% else %}_{% endif %} in 0..3 {
+        {% if has_unique_fields %}let mut payload = create_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}&relation_ids{% endif %});{% else %}let payload = create_{{ entity_name | snake_case }}_payload({% if ns.has_required_relations %}&relation_ids{% endif %});{% endif %}
+        // Modify unique fields if needed
+{% for name, property in entity.attributes | items -%}
+{% if property.unique and property.type == 'string' -%}
+        payload["{{ name | snake_case }}"] = json!(format!("unique_{{ name | snake_case }}_{}", i));
+{% endif -%}
+{% endfor %}
+
+        let response = ctx
+            .client()
+            .post(&base_url)
+{% if authentication != 'none' -%}
+            .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+            .json(&payload)
+            .send()
+            .await
+            .expect("Failed to create {{ entity_name | snake_case }}");
+
+        let (details, created) = ResponseDetails::capture(response, Some(&payload)).await;
+        if details.status == 201 {
+{% if id_type == 'uuid' -%}
+            created_ids.push(created["id"].as_str().unwrap().to_string());
+{% else -%}
+            created_ids.push(created["id"].as_i64().unwrap() as {{ rust_types.rust_id_type(id_type) | trim }});
+{% endif %}
+        } else {
+            eprintln!("⚠️  Failed to create item in bulk test: {}", details.format_log());
+        }
+    }
+
+    // Verify all {{ entity.info.pluralName | default(entity_name | plural | snake_case) }} exist
+    let list_response = ctx
+        .client()
+        .get(&base_url)
+{% if authentication != 'none' -%}
+        .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+        .send()
+        .await
+        .expect("Failed to list {{ entity.info.pluralName | default(entity_name | plural | snake_case) }}");
+
+    let (list_details, items) = ResponseDetails::capture(list_response, None).await;
+    assert_status!(list_details, 200, "Failed to list items in bulk test");
+    assert!(items.as_array().unwrap().len() >= created_ids.len());
+
+    // Clean up - delete all created {{ entity.info.pluralName | default(entity_name | plural | snake_case) }}
+    for id in created_ids {
+        let _ = ctx
+            .client()
+            .delete(&format!("{}/{}", base_url, id))
+{% if authentication != 'none' -%}
+            .header("Authorization", ctx.get_auth_header())
+{% endif -%}
+            .send()
+            .await;
+    }
+
+{% if ns.has_required_relations -%}
+    // Cleanup required relations
+    cleanup_required_relations(&ctx, &relation_ids).await;
+{% endif -%}
+}
