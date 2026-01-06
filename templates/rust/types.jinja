@@ -27,6 +27,12 @@
         {{ name | pascal_case }}
     {%- elif property.type == 'relation' -%}
         {{ property.target | pascal_case }}
+    {%- elif property.type == 'datetime' or property.type == 'timestamp' -%}
+        DateTime
+    {%- elif property.type == 'date' -%}
+        NaiveDate
+    {%- elif property.type == 'time' -%}
+        TimeTime
     {%- elif property.type == 'string' -%}
         {%- if property.format == 'uuid' -%}
             Uuid
