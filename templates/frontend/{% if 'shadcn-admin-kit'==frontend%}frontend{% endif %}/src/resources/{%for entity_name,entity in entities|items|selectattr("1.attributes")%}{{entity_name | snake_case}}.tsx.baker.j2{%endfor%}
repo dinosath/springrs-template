@@ -1,0 +1,52 @@
+{% import "react-admin.jinja" as ra_macros %}
+{% set global = namespace(imports=[]) %}
+{% for name,property in entity.attributes | items -%}
+    {% set global.imports = global.imports + [ra_macros.get_input_field(property=property)] %}
+{% endfor %}
+import { Bookmark } from "lucide-react";
+import { Create, DataTable, Edit, List, SimpleForm, {{ global.imports | unique | sort | join(', ') }} } from "@/components/admin";
+import { ResourceProps, required } from "ra-core";
+
+export const {{ entity_name | pascal_case }}Create = () => (
+    <Create redirect="list">
+        <SimpleForm>
+            <TextInput source="name" label="Name" validate={required()} />
+            {% for name,property in entity.attributes | items -%}
+            <{{ ra_macros.get_input_field(property) }} source="{{ ra_macros.source(name=name,property=property)}}" {{ ra_macros.get_reference(property) }}{{ ra_macros.get_choices(property) }}/>
+            {% endfor %}
+        </SimpleForm>
+    </Create>
+);
+
+export const {{ entity_name | pascal_case }}Edit = () => (
+    <Edit>
+        <div className="flex flex-col lg:flex-row items-start justify-between">
+            <SimpleForm>
+                {% for name,property in entity.attributes | items -%}
+                <{{ ra_macros.get_input_field(property) }} source="{{ ra_macros.source(name=name,property=property)}}" {{ ra_macros.get_reference(property) }}{{ ra_macros.get_choices(property) }}/>
+                {% endfor %}
+            </SimpleForm>
+        </div>
+    </Edit>
+);
+
+export const {{ entity_name | pascal_case }}List = () => (
+    <List perPage={50}>
+        <DataTable>
+            {% for name,property in entity.attributes | items -%}
+            <DataTable.Col source="{{ ra_macros.source(name=name,property=property)}}" />
+            {% endfor %}
+        </DataTable>
+    </List>
+);
+
+export const {{ entity_name | plural | pascal_case }}: ResourceProps = {
+    name: "{{ entity_name | plural | kebab_case }}",
+    list: {{ entity_name | pascal_case }}List,
+    edit: {{ entity_name | pascal_case }}Edit,
+    create: {{ entity_name | pascal_case }}Create,
+    recordRepresentation: "name",
+    icon: Bookmark,
+};
+
+export default {{ entity_name | plural | pascal_case }};

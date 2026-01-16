@@ -1,0 +1,206 @@
+{% if protocol == 'grpc' -%}
+import { createClient, type Client } from '@connectrpc/connect';
+import { createGrpcWebTransport } from '@connectrpc/connect-web';
+import type { DataProvider, GetListParams, GetOneParams, CreateParams, UpdateParams, DeleteParams, GetManyParams, GetManyReferenceParams } from 'ra-core';
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+import { {{ entity_name | pascal_case }}Service } from '@/gen/{{ project_name | snake_case }}_connect';
+import type { {{ entity_name | pascal_case }}, Create{{ entity_name | pascal_case }}Request, Update{{ entity_name | pascal_case }}Request } from '@/gen/{{ project_name | snake_case }}_pb';
+{% endfor %}
+
+const transport = createGrpcWebTransport({
+    baseUrl: window.location.origin,
+});
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+const {{ entity_name | camel_case }}Client = createClient({{ entity_name | pascal_case }}Service, transport);
+{% endfor %}
+
+type ResourceClients = {
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+    '{{ entity_name | plural | snake_case }}': Client<typeof {{ entity_name | pascal_case }}Service>;
+{% endfor %}
+};
+
+const clients: ResourceClients = {
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+    '{{ entity_name | plural | snake_case }}': {{ entity_name | camel_case }}Client,
+{% endfor %}
+};
+
+// Helper to convert protobuf Timestamp to Date string
+const timestampToString = (timestamp: { seconds: bigint; nanos: number } | undefined): string => {
+    if (!timestamp) return new Date().toISOString();
+    return new Date(Number(timestamp.seconds) * 1000 + timestamp.nanos / 1000000).toISOString();
+};
+
+// Helper to convert entity to plain object for react-admin
+const toPlainObject = (entity: Record<string, unknown>): Record<string, unknown> => {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(entity)) {
+        if (key === 'createdAt' || key === 'updatedAt') {
+            result[key] = timestampToString(value as { seconds: bigint; nanos: number } | undefined);
+        } else if (typeof value === 'bigint') {
+            result[key] = Number(value);
+        } else {
+            result[key] = value;
+        }
+    }
+    return result;
+};
+
+export const grpcDataProvider: DataProvider = {
+    getList: async (resource: string, params: GetListParams) => {
+        const { pagination, sort, filter } = params;
+        const { page = 1, perPage = 10 } = pagination || {};
+        
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        // Call the List RPC
+        const response = await (client as unknown as { list: (req: { pageSize: number; pageToken: string }) => Promise<{ [key: string]: unknown[] }> }).list({
+            pageSize: perPage,
+            pageToken: page > 1 ? String((page - 1) * perPage) : '',
+        });
+
+        // Extract the repeated field (assumes naming convention: resource name as field)
+        const dataKey = Object.keys(response).find(k => Array.isArray(response[k])) || resource;
+        const data = (response[dataKey] as unknown[] || []).map(item => toPlainObject(item as Record<string, unknown>));
+
+        return {
+            data,
+            total: data.length + (response.nextPageToken ? perPage : 0),
+        };
+    },
+
+    getOne: async (resource: string, params: GetOneParams) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        const response = await (client as unknown as { get: (req: { id: string }) => Promise<Record<string, unknown>> }).get({
+            id: String(params.id),
+        });
+
+        return {
+            data: toPlainObject(response),
+        };
+    },
+
+    getMany: async (resource: string, params: GetManyParams) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        // Fetch each item individually (gRPC doesn't have batch get by default)
+        const data = await Promise.all(
+            params.ids.map(async (id) => {
+                const response = await (client as unknown as { get: (req: { id: string }) => Promise<Record<string, unknown>> }).get({
+                    id: String(id),
+                });
+                return toPlainObject(response);
+            })
+        );
+
+        return { data };
+    },
+
+    getManyReference: async (resource: string, params: GetManyReferenceParams) => {
+        const { target, id, pagination, sort, filter } = params;
+        const { page = 1, perPage = 10 } = pagination || {};
+        
+        // Use getList and filter by reference
+        const result = await grpcDataProvider.getList(resource, {
+            pagination: { page, perPage },
+            sort,
+            filter: { ...filter, [target]: id },
+        });
+
+        return result;
+    },
+
+    create: async (resource: string, params: CreateParams) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        const response = await (client as unknown as { create: (req: Record<string, unknown>) => Promise<Record<string, unknown>> }).create(params.data);
+
+        return {
+            data: toPlainObject(response),
+        };
+    },
+
+    update: async (resource: string, params: UpdateParams) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        const response = await (client as unknown as { update: (req: Record<string, unknown>) => Promise<Record<string, unknown>> }).update({
+            id: String(params.id),
+            ...params.data,
+        });
+
+        return {
+            data: toPlainObject(response),
+        };
+    },
+
+    updateMany: async (resource: string, params: { ids: (string | number)[]; data: Record<string, unknown> }) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        // Update each item individually
+        await Promise.all(
+            params.ids.map(async (id) => {
+                await (client as unknown as { update: (req: Record<string, unknown>) => Promise<Record<string, unknown>> }).update({
+                    id: String(id),
+                    ...params.data,
+                });
+            })
+        );
+
+        return { data: params.ids };
+    },
+
+    delete: async (resource: string, params: DeleteParams) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        await (client as unknown as { delete: (req: { id: string }) => Promise<void> }).delete({
+            id: String(params.id),
+        });
+
+        return {
+            data: params.previousData as Record<string, unknown>,
+        };
+    },
+
+    deleteMany: async (resource: string, params: { ids: (string | number)[] }) => {
+        const client = clients[resource as keyof ResourceClients];
+        if (!client) {
+            throw new Error(`Unknown resource: ${resource}`);
+        }
+
+        // Delete each item individually
+        await Promise.all(
+            params.ids.map(async (id) => {
+                await (client as unknown as { delete: (req: { id: string }) => Promise<void> }).delete({
+                    id: String(id),
+                });
+            })
+        );
+
+        return { data: params.ids };
+    },
+};
+{% endif -%}

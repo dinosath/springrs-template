@@ -1,0 +1,55 @@
+name: Test Template
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-template:
+    name: Test Template (${{ matrix.protocol }}${{ matrix.auth && format(' + {0}', matrix.auth) || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - protocol: rest
+            answers_file: sample/answers-rest.json
+            project_name: sample-app
+            auth: none
+          - protocol: grpc
+            answers_file: sample/answers-grpc.json
+            project_name: sample-grpc-app
+            auth: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Install Baker
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aliev/baker/releases/latest/download/baker-installer.sh | sh
+
+      - name: Generate project from template
+        run: |
+          mkdir -p generated
+          cat ${{ matrix.answers_file }} | baker . ./generated --answers - --force --non-interactive --skip-confirms all
+
+      - uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: pnpm install --no-frozen-lockfile
+        working-directory: generated
+      - run: pnpm run build
+        working-directory: generated
+      - run: pnpm test
+        working-directory: generated

@@ -1,0 +1,339 @@
+{% import "macros.jinja" as macros %}
+use sea_orm_migration::{prelude::*, schema::*};
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+{# Use the user-provided db_schema (default public) #}
+{% set schema_name = db_schema | default('public') | trim -%}
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        {% if schema_name != 'public' %}
+        // Create schema if not public
+        manager
+            .get_connection()
+            .execute_unprepared("CREATE SCHEMA IF NOT EXISTS {{ schema_name }}")
+            .await?;
+        {% endif %}
+
+        // Create pgcrypto extension
+        manager
+            .get_connection()
+            .execute_unprepared("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+            .await?;
+
+        // Create update_last_updated_column function
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                CREATE OR REPLACE FUNCTION update_last_updated_column()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    NEW.last_updated = CURRENT_TIMESTAMP;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                "#,
+            )
+            .await?;
+
+        {% for entity_name, entity in entities | items | sort(attribute="1.priority") -%}
+        {% if entity.enum -%}
+        // Create enum type for {{ entity_name }}
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{{ entity_name | lower }}_enum') THEN
+                        CREATE TYPE {{ entity_name | lower }}_enum AS ENUM ({{ "'" ~ ( entity.enum | map('string') | join("', '") ) ~ "'" }});
+                    END IF;
+                END $$;
+                "#,
+            )
+            .await?;
+        {% endif -%}
+
+        {% if entity.attributes -%}
+        {% for prop_name, prop in entity.attributes | items -%}
+        {% if prop.enum -%}
+        // Create enum type for {{ prop_name }}
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{{ prop_name | lower }}') THEN
+                        CREATE TYPE {{ prop_name | lower }} AS ENUM ({{ "'" ~ ( prop.enum | map('string') | join("', '") ) ~ "'" }});
+                    END IF;
+                END $$;
+                "#,
+            )
+            .await?;
+        {% endif -%}
+        {% endfor -%}
+
+        {% set table_name = entity_name | table_case -%}
+        // Create table {{ table_name }} (without foreign keys)
+        manager
+            .create_table(
+                Table::create()
+                    .table({{ entity_name | pascal_case }}::Table)
+                    .if_not_exists()
+                    {% if id_type == 'uuid' -%}
+                    .col(pk_uuid({{ entity_name | pascal_case }}::Id))
+                    {% elif id_type == 'big_integer' -%}
+                    .col(pk_bigint({{ entity_name | pascal_case }}::Id))
+                    {% else -%}
+                    .col(pk_auto({{ entity_name | pascal_case }}::Id))
+                    {% endif -%}
+                    .col(timestamp({{ entity_name | pascal_case }}::CreatedAt).default(Expr::current_timestamp()))
+                    .col(timestamp({{ entity_name | pascal_case }}::LastUpdated).default(Expr::current_timestamp()))
+                    {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
+                    {% for name, property in attributes -%}
+                    {% set is_required = name in entity.required or property.required -%}
+                    {%- if macros.is_relation(property)=='true' and (macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true') -%}
+                    {% set fk_name = name | snake_case ~ '_id' -%}
+                    {% if id_type == 'uuid' -%}
+                    .col(uuid({{ entity_name | pascal_case }}::{{ fk_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif id_type == 'big_integer' -%}
+                    .col(big_integer({{ entity_name | pascal_case }}::{{ fk_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% else -%}
+                    .col(integer({{ entity_name | pascal_case }}::{{ fk_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% endif -%}
+                    {% else -%}
+                    {% set col_name = name | snake_case -%}
+                    {% if property.type == 'string' -%}
+                    .col(string({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'text' -%}
+                    .col(text({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'integer' -%}
+                    .col(integer({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'biginteger' -%}
+                    .col(big_integer({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'float' or property.type == 'decimal' -%}
+                    .col(double({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'boolean' -%}
+                    .col(boolean({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'date' -%}
+                    .col(date({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'datetime' or property.type == 'timestamp' -%}
+                    .col(timestamp({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'time' -%}
+                    .col(time({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'json' -%}
+                    .col(json({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.type == 'uuid' -%}
+                    .col(uuid({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% elif property.enum -%}
+                    .col(string({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% else -%}
+                    .col(string({{ entity_name | pascal_case }}::{{ col_name | pascal_case }}){{ '.not_null()' if is_required else '.null()' }})
+                    {% endif -%}
+                    {% endif -%}
+                    {% endfor -%}
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create trigger for {{ table_name }}
+        manager
+            .get_connection()
+            .execute_unprepared(&format!(
+                r#"
+                DROP TRIGGER IF EXISTS set_last_updated ON {schema}.{table};
+                CREATE TRIGGER set_last_updated
+                    BEFORE UPDATE ON {schema}.{table}
+                    FOR EACH ROW EXECUTE FUNCTION update_last_updated_column();
+                "#,
+                schema = "{{ schema_name }}",
+                table = "{{ table_name }}",
+            ))
+            .await?;
+
+        {% endif -%}
+        {% endfor -%}
+
+        // Now add all foreign key constraints (after all tables exist)
+        {% for entity_name, entity in entities | items | sort(attribute="1.priority") -%}
+        {% if entity.attributes -%}
+        {% set table_name = entity_name | table_case -%}
+        {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
+        {% for name, property in attributes -%}
+        {%- if macros.is_relation(property)=='true' and (macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true') -%}
+        {% set fk_name = name | snake_case ~ '_id' -%}
+        {% set target_table = property.target | table_case -%}
+        // Add foreign key {{ fk_name }} -> {{ target_table }}
+        manager
+            .create_foreign_key(
+                ForeignKey::create()
+                    .name("fk_{{ table_name }}_{{ fk_name }}")
+                    .from({{ entity_name | pascal_case }}::Table, {{ entity_name | pascal_case }}::{{ fk_name | pascal_case }})
+                    .to({{ property.target | pascal_case }}::Table, {{ property.target | pascal_case }}::Id)
+                    .on_delete(ForeignKeyAction::Cascade)
+                    .to_owned(),
+            )
+            .await?;
+
+        {% endif -%}
+        {% endfor -%}
+        {% endif -%}
+        {% endfor -%}
+
+        // Create many-to-many junction tables
+        {% for relation in macros.get_m2m_relations(entities) | split(',') -%}
+        {% if relation | trim != '' -%}
+        {% set left = relation | split('_') | first -%}
+        {% set right = relation | split('_') | last -%}
+        {% set left_fk = left | foreign_key | trim -%}
+        {% set right_fk = right | foreign_key | trim -%}
+        {% set rel_name = relation | trim -%}
+        manager
+            .create_table(
+                Table::create()
+                    .table({{ rel_name | pascal_case }}::Table)
+                    .if_not_exists()
+                    {% if id_type == 'uuid' -%}
+                    .col(uuid({{ rel_name | pascal_case }}::{{ left_fk | pascal_case }}).not_null())
+                    .col(uuid({{ rel_name | pascal_case }}::{{ right_fk | pascal_case }}).not_null())
+                    {% elif id_type == 'big_integer' -%}
+                    .col(big_integer({{ rel_name | pascal_case }}::{{ left_fk | pascal_case }}).not_null())
+                    .col(big_integer({{ rel_name | pascal_case }}::{{ right_fk | pascal_case }}).not_null())
+                    {% else -%}
+                    .col(integer({{ rel_name | pascal_case }}::{{ left_fk | pascal_case }}).not_null())
+                    .col(integer({{ rel_name | pascal_case }}::{{ right_fk | pascal_case }}).not_null())
+                    {% endif -%}
+                    .primary_key(
+                        Index::create()
+                            .col({{ rel_name | pascal_case }}::{{ left_fk | pascal_case }})
+                            .col({{ rel_name | pascal_case }}::{{ right_fk | pascal_case }}),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_{{ rel_name }}_{{ left_fk }}")
+                            .from({{ rel_name | pascal_case }}::Table, {{ rel_name | pascal_case }}::{{ left_fk | pascal_case }})
+                            .to({{ left | pascal_case }}::Table, {{ left | pascal_case }}::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_{{ rel_name }}_{{ right_fk }}")
+                            .from({{ rel_name | pascal_case }}::Table, {{ rel_name | pascal_case }}::{{ right_fk | pascal_case }})
+                            .to({{ right | pascal_case }}::Table, {{ right | pascal_case }}::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create index for {{ rel_name }}
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_{{ rel_name }}_{{ right_fk }}_{{ left_fk }}")
+                    .table({{ rel_name | pascal_case }}::Table)
+                    .col({{ rel_name | pascal_case }}::{{ right_fk | pascal_case }})
+                    .col({{ rel_name | pascal_case }}::{{ left_fk | pascal_case }})
+                    .to_owned(),
+            )
+            .await?;
+        {% endif -%}
+        {% endfor -%}
+
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // Drop many-to-many junction tables first
+        {% for relation in macros.get_m2m_relations(entities) | split(',') | reverse -%}
+        {% if relation | trim != '' -%}
+        {% set rel_name = relation | trim -%}
+        manager
+            .drop_table(Table::drop().table({{ rel_name | pascal_case }}::Table).to_owned())
+            .await?;
+        {% endif -%}
+        {% endfor -%}
+
+        // Drop foreign keys first (in reverse order)
+        {% for entity_name, entity in entities | items | sort(attribute="1.priority") | reverse -%}
+        {% if entity.attributes -%}
+        {% set table_name = entity_name | table_case -%}
+        {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
+        {% for name, property in attributes -%}
+        {%- if macros.is_relation(property)=='true' and (macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true') -%}
+        {% set fk_name = name | snake_case ~ '_id' -%}
+        manager
+            .drop_foreign_key(
+                ForeignKey::drop()
+                    .name("fk_{{ table_name }}_{{ fk_name }}")
+                    .table({{ entity_name | pascal_case }}::Table)
+                    .to_owned(),
+            )
+            .await?;
+
+        {% endif -%}
+        {% endfor -%}
+        {% endif -%}
+        {% endfor -%}
+
+        // Drop entity tables in reverse order
+        {% for entity_name, entity in entities | items | sort(attribute="1.priority") | reverse -%}
+        {% if entity.attributes -%}
+        manager
+            .drop_table(Table::drop().table({{ entity_name | pascal_case }}::Table).to_owned())
+            .await?;
+        {% endif -%}
+        {% endfor -%}
+
+        Ok(())
+    }
+}
+
+// Define Iden enums for tables and columns
+{% for entity_name, entity in entities | items | sort(attribute="1.priority") -%}
+{% if entity.attributes -%}
+{% set table_name = entity_name | table_case -%}
+#[derive(DeriveIden)]
+#[sea_orm(iden = "{{ table_name }}")]
+enum {{ entity_name | pascal_case }} {
+    #[sea_orm(iden = "{{ table_name }}")]
+    Table,
+    Id,
+    CreatedAt,
+    LastUpdated,
+    {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
+    {% for name, property in attributes -%}
+    {%- if macros.is_relation(property)=='true' and (macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true') -%}
+    {{ name | snake_case | pascal_case }}Id,
+    {% else -%}
+    {{ name | snake_case | pascal_case }},
+    {% endif -%}
+    {% endfor -%}
+}
+
+{% endif -%}
+{% endfor -%}
+
+// Define Iden enums for junction tables
+{% for relation in macros.get_m2m_relations(entities) | split(',') -%}
+{% if relation | trim != '' -%}
+{% set left = relation | split('_') | first -%}
+{% set right = relation | split('_') | last -%}
+{% set left_fk = left | foreign_key | trim -%}
+{% set right_fk = right | foreign_key | trim -%}
+{% set rel_name = relation | trim -%}
+#[derive(DeriveIden)]
+enum {{ rel_name | pascal_case }} {
+    Table,
+    {{ left_fk | pascal_case }},
+    {{ right_fk | pascal_case }},
+}
+
+{% endif -%}
+{% endfor -%}

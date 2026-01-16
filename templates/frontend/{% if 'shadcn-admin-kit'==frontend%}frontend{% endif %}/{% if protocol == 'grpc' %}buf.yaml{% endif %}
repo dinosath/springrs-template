@@ -1,0 +1,4 @@
+version: v2
+name: buf.build/{{ project_name | snake_case }}/{{ project_name | snake_case }}
+deps:
+  - buf.build/googleapis/googleapis

@@ -1,0 +1,39 @@
+import { Admin } from "@/components/admin";
+{% if protocol == 'rest' -%}
+import { dataProvider } from '@/lib/dataProvider';
+{% elif protocol == 'grpc' -%}
+import { grpcDataProvider } from '@/lib/grpcDataProvider';
+{% endif -%}
+{% if authentication != 'none' -%}
+import { authProvider } from '@/lib/authProvider';
+{% endif -%}
+{% if entities | items | selectattr("1.attributes") | length > 0 -%}
+import {Resource} from "ra-core";
+{% endif %}
+import { Dashboard } from "./components/dashboard/Dashboard";
+
+{% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
+import {{ entity_name | camel_case }} from "./resources/{{ entity_name | snake_case }}"
+{% endfor %}
+
+{% if protocol == 'grpc' -%}
+const dataProvider = grpcDataProvider;
+{% endif %}
+
+function App() {
+    return (
+        <Admin
+            dataProvider={dataProvider}
+            {% if authentication != 'none' -%}
+            authProvider={authProvider}
+            requireAuth
+            {% endif -%}
+            dashboard={Dashboard}
+        >
+            {% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
+            <Resource { ...{{ entity_name | camel_case }} }/>
+            {% endfor %}
+        </Admin>
+    );
+}
+export default App;

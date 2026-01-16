@@ -1,0 +1,144 @@
+{% import "macros.jinja" as macros -%}
+import { http, HttpResponse } from 'msw';
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_plural = entity_name | plural | snake_case -%}
+{% set entity_singular = entity_name | snake_case -%}
+// Mock data for {{ entity_plural }}
+const {{ entity_plural }}Data = [
+{% for i in range(1, 4) %}
+  {
+    id: {{ i }},
+    created_at: '2024-01-0{{ i }}T00:00:00Z',
+    last_updated: '2024-01-0{{ i }}T00:00:00Z',
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'relation' -%}
+{% if property.relation == 'manyToOne' or property.relation == 'oneToOne' -%}
+    {{ name | snake_case }}: { id: {{ i }} },
+{%- elif property.relation == 'manyToMany' or property.relation == 'oneToMany' -%}
+    {{ name | snake_case }}: [{{ i }}],
+{%- endif -%}
+{%- elif property.type == 'string' -%}
+{% if property.format == 'email' -%}
+    {{ name | snake_case }}: '{{ name | snake_case }}{{ i }}@example.com',
+{%- elif property.format == 'uri' or property.format == 'url' -%}
+    {{ name | snake_case }}: 'https://example.com/{{ name | snake_case }}/{{ i }}',
+{%- else -%}
+    {{ name | snake_case }}: '{{ name | title | replace("_", " ") }} {{ i }}',
+{%- endif -%}
+{%- elif property.type == 'text' -%}
+    {{ name | snake_case }}: 'Sample {{ name | title | replace("_", " ") }} content for item {{ i }}.',
+{%- elif property.type == 'integer' or property.type == 'number' or property.type == 'biginteger' -%}
+    {{ name | snake_case }}: {{ property.default | default(i * 10) }},
+{%- elif property.type == 'boolean' -%}
+    {{ name | snake_case }}: {{ 'true' if i % 2 == 1 else 'false' }},
+{%- elif property.type == 'datetime' or property.type == 'date' -%}
+    {{ name | snake_case }}: '2024-01-0{{ i }}T12:00:00Z',
+{%- elif property.type == 'enumeration' or property.enum -%}
+    {{ name | snake_case }}: '{{ property.enum[0] if property.enum else "default" }}',
+{%- else -%}
+    {{ name | snake_case }}: null,
+{%- endif %}
+{% endfor -%}
+  },
+{% endfor %}
+];
+
+{% endfor -%}
+
+export const handlers = [
+{% if authentication == 'jwt' or authentication == 'oidc' -%}
+  // Auth handlers
+  http.post('/api/auth/login', () => {
+    return HttpResponse.json({
+      access_token: 'mock-jwt-token-for-testing',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      user: {
+        id: 1,
+        username: 'admin',
+        email: 'admin@example.com',
+        roles: ['admin'],
+      },
+    });
+  }),
+
+  http.get('/api/auth/me', () => {
+    return HttpResponse.json({
+      id: 1,
+      username: 'admin',
+      email: 'admin@example.com',
+      roles: ['admin'],
+    });
+  }),
+
+  http.post('/api/auth/logout', () => {
+    return HttpResponse.json({ message: 'Logged out successfully' });
+  }),
+
+  http.post('/api/auth/register', () => {
+    return HttpResponse.json({
+      id: 2,
+      username: 'newuser',
+      email: 'newuser@example.com',
+      roles: ['user'],
+    }, { status: 201 });
+  }),
+
+{% endif -%}
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_plural = entity_name | plural | snake_case -%}
+  // {{ entity_name }} handlers
+  http.get('/api/{{ entity_plural }}', ({ request }) => {
+    const url = new URL(request.url);
+    const start = parseInt(url.searchParams.get('_start') || '0');
+    const end = parseInt(url.searchParams.get('_end') || '10');
+    const data = {{ entity_plural }}Data.slice(start, end);
+    return HttpResponse.json(data, {
+      headers: {
+        'Content-Range': `{{ entity_plural }} ${start}-${Math.min(end, {{ entity_plural }}Data.length)}/${ {{- entity_plural -}}Data.length}`,
+      },
+    });
+  }),
+
+  http.get('/api/{{ entity_plural }}/:id', ({ params }) => {
+    const id = parseInt(params.id as string);
+    const item = {{ entity_plural }}Data.find(i => i.id === id);
+    if (!item) {
+      return new HttpResponse(null, { status: 404 });
+    }
+    return HttpResponse.json(item);
+  }),
+
+  http.post('/api/{{ entity_plural }}', async ({ request }) => {
+    const body = await request.json() as Record<string, unknown>;
+    const newItem = {
+      id: {{ entity_plural }}Data.length + 1,
+      created_at: new Date().toISOString(),
+      last_updated: new Date().toISOString(),
+      ...body,
+    };
+    return HttpResponse.json(newItem, { status: 201 });
+  }),
+
+  http.put('/api/{{ entity_plural }}/:id', async ({ params, request }) => {
+    const id = parseInt(params.id as string);
+    const body = await request.json() as Record<string, unknown>;
+    const item = {{ entity_plural }}Data.find(i => i.id === id);
+    if (!item) {
+      return new HttpResponse(null, { status: 404 });
+    }
+    return HttpResponse.json({
+      ...item,
+      ...body,
+      last_updated: new Date().toISOString(),
+    });
+  }),
+
+  http.delete('/api/{{ entity_plural }}/:id', ({ params }) => {
+    const id = parseInt(params.id as string);
+    return HttpResponse.json({ id });
+  }),
+
+{% endfor -%}
+];
