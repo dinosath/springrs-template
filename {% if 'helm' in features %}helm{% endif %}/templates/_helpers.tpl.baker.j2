@@ -1,3 +1,0 @@
-{% raw %}{{- define "{% endraw %}{{ project_name | kebab_case }}{% raw %}.fullname" -}}
-{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 -}}
-{{- end -}}{% endraw %}

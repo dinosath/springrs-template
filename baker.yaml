@@ -46,9 +46,9 @@ questions:
     choices:
       - postgres
 
-  use_sqlx_migrations:
+  use_seaorm_migrations:
     type: bool
-    help: Do you want to use sqlx migrations?
+    help: Do you want to use SeaORM migrations?
     default: false
     ask_if: database == 'postgres'
 
