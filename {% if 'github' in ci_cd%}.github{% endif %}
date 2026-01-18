@@ -1,1 +1,1 @@
-templates/ci/{% if 'github' in ci_cd%}.github{% endif %}
+templates/ci/github

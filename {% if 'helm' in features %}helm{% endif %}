@@ -1,1 +1,1 @@
-templates/kubernetes/{% if 'helm' in features %}helm{% endif %}
+templates/kubernetes/helm
