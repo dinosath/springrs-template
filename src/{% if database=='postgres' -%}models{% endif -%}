@@ -1,0 +1,1 @@
+templates/rust/sea-orm/{% if database=='postgres' -%}models{% endif -%}

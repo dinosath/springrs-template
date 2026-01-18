@@ -7,7 +7,7 @@ rust = "latest"
 "cargo:cargo-deny" = "latest"
 pnpm = "latest"
 "npm:playwright" = "latest"
-protoc = "latest"
+"aqua:protocolbuffers/protobuf/protoc" = "v26.1"
 
 [tasks.generate]
 description = "Generate the project files"
