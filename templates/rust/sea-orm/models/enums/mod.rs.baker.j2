@@ -1,0 +1,3 @@
+{% for entity_name,entity in entities | items | selectattr("1.enum")-%}
+pub mod {{ entity_name | snake_case }};
+{% endfor -%}

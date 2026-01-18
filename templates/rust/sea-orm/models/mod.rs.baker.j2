@@ -1,0 +1,11 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types %}
+
+pub mod enums;
+{% for entity_name,entity in entities | items | selectattr("1.attributes")-%}
+pub mod {{ rust_types.identifier(entity_name) }};
+{% endfor -%}
+{% for relation in macros.get_m2m_relations(entities)|split(',')  -%}
+{% if relation|trim=='' -%}{% continue -%}{% endif -%}
+pub mod {{ rust_types.identifier(relation) }};
+{% endfor -%}
