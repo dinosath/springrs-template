@@ -1,6 +1,9 @@
 {
 	"name": "SpringRS Template",
-	"image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": "."
+	},
 	"features": {
 		"ghcr.io/devcontainers/features/common-utils:2": {},
 		"ghcr.io/devcontainers-contrib/features/mise:1": {}
@@ -13,7 +16,8 @@
 				"ms-vscode.makefile-tools",
 				"GitHub.copilot",
 				"GitHub.copilot-chat",
-				"biomejs.biome"
+				"biomejs.biome",
+				"hverlin.mise-vscode"
 			],
 			"settings": {
 				"[rust]": {
