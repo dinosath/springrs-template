@@ -24,12 +24,12 @@ jq --argjson entities "$entities_json" '.entities = $entities' answers.json > tm
 
 [tasks.generate-local]
 description = "Generate the project files from local repo"
-run = "baker ../springrs-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+run = "baker ../axum-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
 depends = ["merge-entities"]
 
 [tasks.generate]
 description = "Generate the project files"
-run = "baker https://github.com/dinosath/springrs-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+run = "baker https://github.com/dinosath/axum-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
 depends = ["merge-entities"]
 
 {% if frontend != "none" %}
@@ -48,21 +48,37 @@ description = "Build the project"
 run = "cargo build --release"
 {% if frontend != "none" %}
 depends = "frontend"
-{% else %}
-depends = "generate-local"
 {% endif %}
 
 [tasks.test]
 description = "Run tests"
-run = "cargo test"
+run = "cargo tarpaulin --out Html --out Lcov --output-dir target/coverage"
 depends = ["build"]
+
+[tasks.audit]
+description = "Check for vulnerabilities using cargo deny"
+run = "cargo deny check"
+depends = ["test"]
+
+[tasks.cargo-chef]
+description = "Run cargo chef to cache dependencies"
+run = "cargo chef prepare --recipe-path recipe.json"
+depends = ["test"]
 
 [tasks.docker-build]
 description = "Build Docker images"
-run = "docker build -t app-e2e-test ."
-depends = ["test"]
+run = "docker build -t {{project_name}} ."
+depends = ["cargo-chef"]
 
 [tasks.e2e]
 description = "Run e2e tests"
-run = "cargo test"
+run = '''
+cd e2e
+cargo test
+'''
 depends = ["docker-build"]
+
+[tasks.docker-push]
+description = "Build Docker images"
+run = "docker build -t {{project_name}} ."
+depends = ["test"]

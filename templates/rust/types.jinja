@@ -30,7 +30,7 @@
     {%- elif property.type == 'datetime' or property.type == 'timestamp' -%}
         DateTime
     {%- elif property.type == 'date' -%}
-        NaiveDate
+        Date
     {%- elif property.type == 'time' -%}
         TimeTime
     {%- elif property.type == 'string' -%}
@@ -39,7 +39,7 @@
         {%- elif property.format == 'date-time' -%}
             DateTime
         {%- elif property.format == 'date' -%}
-            NaiveDate
+            Date
         {%- elif property.format == 'time' -%}
             TimeTime
         {%- elif property.format in ['email', 'url'] -%}

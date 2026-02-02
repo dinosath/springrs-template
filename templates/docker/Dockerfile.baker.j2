@@ -21,7 +21,7 @@ COPY --from=node /app/dist /app/frontend/dist
 RUN cargo build --release
 RUN upx --best --lzma /app/target/release/{{project_name}}
 
-FROM gcr.io/distroless/static-debian13:nonroot AS runtime
+FROM dhi.io/static:20251003-alpine3.23 AS runtime
 COPY --from=builder /app/target/release/{{project_name}} /
 
 EXPOSE 8080
