@@ -1,0 +1,81 @@
+{%- import "macros.jinja" as macros -%}
+
+{%- macro get_input_type(name, property, required=false) -%}
+{%- filter trim -%}
+{%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+SelectField
+{%- elif macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
+SelectField
+{%- elif 'type' in property and property.type == "string" -%}
+    {%- if property.format and property.format == "uuid" -%}
+        TextField
+    {%- elif property.format and property.format == "date-time" -%}
+        DateTimeField
+    {%- elif property.format and property.format == "date" -%}
+        DateField
+    {%- elif property.format and property.format == "time" -%}
+        TextField
+    {%- else -%}
+        TextField
+    {%- endif -%}
+{%- elif 'type' in property and property.type == "boolean" -%}
+    BooleanField
+{%- elif 'type' in property and property.type == "integer" -%}
+    NumberField
+{%- elif 'type' in property and property.type == "number" -%}
+    NumberField
+{%- elif 'enum' in property -%}
+    SelectField
+{%- else -%}
+    TextField
+{%- endif -%}
+{%- endfilter -%}
+{%- endmacro -%}
+
+{%- macro get_choices(property) -%}
+{%- filter trim -%}
+{%- if 'enum' in property -%}
+options={[
+{%- for enum in property.enum -%}{ value: '{{ enum }}', label: '{{ enum }}' }{{ ',' if not loop.last }}{%- endfor -%}]}
+{%- endif -%}
+{%- endfilter -%}
+{%- endmacro -%}
+
+{%- macro source(name, property) -%}
+{%- filter trim -%}
+{{name | camel_case}}
+{%- if macros.relation_is_many_to_one(property)=='true' -%}
+.id
+{%- endif -%}
+{%- endfilter -%}
+{%- endmacro -%}
+
+{%- macro get_column_type(property) -%}
+{%- filter trim -%}
+{%- if 'type' in property and property.type == "string" -%}
+    {%- if property.format and property.format == "date-time" -%}
+        date
+    {%- elif property.format and property.format == "date" -%}
+        date
+    {%- else -%}
+        string
+    {%- endif -%}
+{%- elif 'type' in property and property.type == "boolean" -%}
+    boolean
+{%- elif 'type' in property and property.type == "integer" -%}
+    number
+{%- elif 'type' in property and property.type == "number" -%}
+    number
+{%- else -%}
+    string
+{%- endif -%}
+{%- endfilter -%}
+{%- endmacro -%}
+
+{%- macro is_required(entity, name) -%}
+{%- filter trim -%}
+{%- if 'required' in entity and name in entity.required -%}
+required
+{%- endif -%}
+{%- endfilter -%}
+{%- endmacro -%}

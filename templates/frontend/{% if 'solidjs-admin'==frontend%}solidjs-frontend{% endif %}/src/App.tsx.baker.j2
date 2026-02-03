@@ -1,0 +1,40 @@
+import { Routes, Route } from '@solidjs/router'
+import { Toaster } from 'solid-sonner'
+import { Layout } from '@/components/layout/Layout'
+import { Dashboard } from '@/pages/Dashboard'
+{% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
+import { {{ entity_name | pascal_case }}List, {{ entity_name | pascal_case }}Create, {{ entity_name | pascal_case }}Edit } from '@/pages/{{ entity_name | snake_case }}'
+{% endfor %}
+{% if authentication != 'none' -%}
+import { LoginPage } from '@/pages/Login'
+import { AuthProvider } from '@/lib/auth'
+{% endif %}
+
+function App() {
+  return (
+    <>
+      {% if authentication != 'none' -%}
+      <AuthProvider>
+      {% endif -%}
+        <Routes>
+          {% if authentication != 'none' -%}
+          <Route path="/login" component={LoginPage} />
+          {% endif -%}
+          <Route path="/" component={Layout}>
+            <Route path="/" component={Dashboard} />
+            {% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
+            <Route path="/{{ entity_name | plural | kebab_case }}" component={{ "{" }}{{ entity_name | pascal_case }}List{{ "}" }} />
+            <Route path="/{{ entity_name | plural | kebab_case }}/create" component={{ "{" }}{{ entity_name | pascal_case }}Create{{ "}" }} />
+            <Route path="/{{ entity_name | plural | kebab_case }}/:id" component={{ "{" }}{{ entity_name | pascal_case }}Edit{{ "}" }} />
+            {% endfor %}
+          </Route>
+        </Routes>
+      {% if authentication != 'none' -%}
+      </AuthProvider>
+      {% endif -%}
+      <Toaster />
+    </>
+  )
+}
+
+export default App

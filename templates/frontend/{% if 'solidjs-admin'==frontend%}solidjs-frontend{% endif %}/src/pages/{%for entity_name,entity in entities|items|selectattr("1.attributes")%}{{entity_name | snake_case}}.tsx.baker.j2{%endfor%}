@@ -1,0 +1,75 @@
+{% import "solidjs-admin.jinja" as solid_macros %}
+{% import "macros.jinja" as macros %}
+{% set global = namespace(imports=[]) %}
+{% for name, property in entity.attributes | items -%}
+    {% set global.imports = global.imports + [solid_macros.get_input_type(name, property)] %}
+{% endfor %}
+import { Component } from 'solid-js'
+import { Column } from '@/components/ui'
+import { List, Create, Edit, {{ global.imports | unique | sort | join(', ') }} } from '@/components/crud'
+
+interface {{ entity_name | pascal_case }} {
+  id: string
+  {% for name, property in entity.attributes | items -%}
+  {{ name | camel_case }}{% if macros.relation_is_many_to_one(property)=='true' %}?: { id: string }{% elif property.type == 'string' %}?: string{% elif property.type == 'number' or property.type == 'integer' %}?: number{% elif property.type == 'boolean' %}?: boolean{% else %}?: unknown{% endif %}
+  {% endfor %}
+}
+
+const columns: Column<{{ entity_name | pascal_case }}>[] = [
+  {% for name, property in entity.attributes | items -%}
+  {% if not macros.relation_is_one_to_many(property)=='true' and not macros.relation_is_many_to_many(property)=='true' -%}
+  { key: '{{ solid_macros.source(name, property) }}', header: '{{ name | title_case }}' },
+  {% endif -%}
+  {% endfor %}
+]
+
+export const {{ entity_name | pascal_case }}List: Component = () => (
+  <List<{{ entity_name | pascal_case }}>
+    resource="{{ entity_name | plural | kebab_case }}"
+    title="{{ entity_name | plural | title_case }}"
+    columns={columns}
+    createPath="/{{ entity_name | plural | kebab_case }}/create"
+    editPath={(item) => `/{{ entity_name | plural | kebab_case }}/${item.id}`}
+  />
+)
+
+export const {{ entity_name | pascal_case }}Create: Component = () => (
+  <Create<{{ entity_name | pascal_case }}>
+    resource="{{ entity_name | plural | kebab_case }}"
+    title="Create {{ entity_name | title_case }}"
+  >
+    {% for name, property in entity.attributes | items -%}
+    {% if not macros.relation_is_one_to_many(property)=='true' and not macros.relation_is_many_to_many(property)=='true' -%}
+    <{{ solid_macros.get_input_type(name, property) }}
+      name="{{ name | camel_case }}"
+      label="{{ name | title_case }}"
+      {% if solid_macros.is_required(entity, name) == 'required' %}required{% endif %}
+      {% if solid_macros.get_choices(property) %}{{ solid_macros.get_choices(property) }}{% endif %}
+    />
+    {% endif -%}
+    {% endfor %}
+  </Create>
+)
+
+export const {{ entity_name | pascal_case }}Edit: Component = () => (
+  <Edit<{{ entity_name | pascal_case }}>
+    resource="{{ entity_name | plural | kebab_case }}"
+    title="Edit {{ entity_name | title_case }}"
+  >
+    {(data) => (
+      <>
+        {% for name, property in entity.attributes | items -%}
+        {% if not macros.relation_is_one_to_many(property)=='true' and not macros.relation_is_many_to_many(property)=='true' -%}
+        <{{ solid_macros.get_input_type(name, property) }}
+          name="{{ name | camel_case }}"
+          label="{{ name | title_case }}"
+          value={data()?.{{ solid_macros.source(name, property) }}{% if property.type == 'string' %} ?? ''{% elif property.type == 'number' or property.type == 'integer' %}{% elif property.type == 'boolean' %} ?? false{% endif %}}
+          {% if solid_macros.is_required(entity, name) == 'required' %}required{% endif %}
+          {% if solid_macros.get_choices(property) %}{{ solid_macros.get_choices(property) }}{% endif %}
+        />
+        {% endif -%}
+        {% endfor %}
+      </>
+    )}
+  </Edit>
+)

@@ -1,0 +1,63 @@
+import { ParentComponent, Show } from 'solid-js'
+import { cn } from '@/lib/utils'
+import { Bell, Search, Sun, Moon, User } from 'lucide-solid'
+import { createSignal } from 'solid-js'
+{% if authentication != 'none' -%}
+import { useAuth } from '@/lib/auth'
+{% endif %}
+
+export const Header: ParentComponent = () => {
+  const [darkMode, setDarkMode] = createSignal(false)
+
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode())
+    document.documentElement.classList.toggle('dark', darkMode())
+  }
+
+  return (
+    <header class="flex h-16 items-center justify-between border-b bg-card px-6">
+      <div class="flex items-center gap-4">
+        <div class="relative">
+          <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search..."
+            class="h-10 w-64 rounded-md border bg-background pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <button
+          onClick={toggleDarkMode}
+          class="rounded-md p-2 hover:bg-accent"
+        >
+          <Show when={darkMode()} fallback={<Sun class="h-5 w-5" />}>
+            <Moon class="h-5 w-5" />
+          </Show>
+        </button>
+
+        <button class="relative rounded-md p-2 hover:bg-accent">
+          <Bell class="h-5 w-5" />
+          <span class="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive" />
+        </button>
+
+        {% if authentication != 'none' -%}
+        <div class="flex items-center gap-2">
+          <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <User class="h-4 w-4" />
+          </div>
+          <span class="text-sm font-medium">{useAuth().user()?.name ?? 'User'}</span>
+        </div>
+        {% else -%}
+        <div class="flex items-center gap-2">
+          <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <User class="h-4 w-4" />
+          </div>
+          <span class="text-sm font-medium">Admin</span>
+        </div>
+        {% endif %}
+      </div>
+    </header>
+  )
+}
