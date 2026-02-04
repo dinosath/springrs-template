@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    tags: ["*"]
+    branches: ["main"]
+
+jobs:
+  ci:
+    name: CI 
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v3
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/target/
+            {{'~/frontend/node_modules' if frontend!='none' }}
+          key: ${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+      - run: mise run ci
