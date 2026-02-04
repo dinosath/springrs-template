@@ -15,14 +15,12 @@ COPY . .
 RUN apk add --no-cache protobuf-dev protoc
 {% endif -%}
 
-{% if frontend!='none' -%}
-COPY --from=node /app/dist /app/frontend/dist
-{% endif %}
 RUN cargo build --release
 RUN upx --best --lzma /app/target/release/{{project_name}}
 
-FROM dhi.io/static:20251003-alpine3.23 AS runtime
-COPY --from=builder /app/target/release/{{project_name}} /
+{% set runtime_base_image = "dhi.io/static:20251003-alpine3.23" if docker_hardened_images in features else "gcr.io/distroless/static-debian13" -%}
+FROM {{ runtime_base_image }} AS runtime
+COPY --from=builder /app/target/release/{{project_name}} /{{project_name}}
 
 EXPOSE 8080
 

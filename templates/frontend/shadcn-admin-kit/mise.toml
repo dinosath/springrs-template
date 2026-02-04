@@ -1,0 +1,22 @@
+[tools]
+node = '24'
+pnpm = "latest"
+"npm:playwright" = "latest"
+
+[tasks.dev]
+description = "Build frontend"
+run = '''
+pnpm install --no-frozen-lockfile
+pnpm run dev
+'''
+
+[tasks.build]
+description = "Build frontend"
+run = '''
+pnpm install --no-frozen-lockfile
+pnpm run build
+'''
+
+[tasks.default]
+description = "Default task: build frontend"
+run = { task = "build" }

@@ -1,5 +1,5 @@
 {% import "react-admin.jinja" as ra_macros %}
-{% set global = namespace(imports=[]) %}
+{% set global = namespace(imports=['TextInput']) %}
 {% for name,property in entity.attributes | items -%}
     {% set global.imports = global.imports + [ra_macros.get_input_field(property=property)] %}
 {% endfor %}

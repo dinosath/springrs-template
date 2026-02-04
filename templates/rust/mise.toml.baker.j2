@@ -1,18 +1,11 @@
 [tools]
-node = '24'
 rust = "latest"
 "github:aliev/baker" = "latest"
 "cargo:cargo-chef" = "latest"
-{% if frontend != "none" %}
-pnpm = "latest"
-"npm:playwright" = "latest"
-'''
-{% endif %}
-
-{% if protocol == "grpc" %}
-protoc = "latest"
-{% endif %}
+{{'protoc = "latest"' if protocol == "grpc" }}
+{{'helm = "latest"' if  "helm" in features }}
 jq = "latest"
+
 
 [tasks.merge-entities]
 description = "Merge all entity JSON files into answers.json"
@@ -25,60 +18,107 @@ jq --argjson entities "$entities_json" '.entities = $entities' answers.json > tm
 [tasks.generate-local]
 description = "Generate the project files from local repo"
 run = "baker ../axum-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
 [tasks.generate]
 description = "Generate the project files"
 run = "baker https://github.com/dinosath/axum-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
 {% if frontend != "none" %}
-[tasks.frontend]
+[tasks.frontend-dev]
+description = "Run frontend dev server"
+dir = "frontend"
+run = "mise run dev"
+
+[tasks.frontend-build]
 description = "Build frontend"
-run = '''
-cd frontend
-pnpm install --no-frozen-lockfile
-pnpm run build
-'''
-depends = ["generate-local"]
+dir = "frontend"
+run = "mise run"
 {% endif %}
 
 [tasks.build]
 description = "Build the project"
 run = "cargo build --release"
-{% if frontend != "none" %}
-depends = "frontend"
-{% endif %}
+{{ 'depends = "frontend-build"' if frontend != "none" }}
 
 [tasks.test]
 description = "Run tests"
+run = "cargo test --all --verbose"
+
+[tasks.test-coverage]
+description = "Run tests for coverage report"
 run = "cargo tarpaulin --out Html --out Lcov --output-dir target/coverage"
-depends = ["build"]
 
 [tasks.audit]
 description = "Check for vulnerabilities using cargo deny"
 run = "cargo deny check"
-depends = ["test"]
 
 [tasks.cargo-chef]
 description = "Run cargo chef to cache dependencies"
 run = "cargo chef prepare --recipe-path recipe.json"
-depends = ["test"]
 
 [tasks.docker-build]
 description = "Build Docker images"
 run = "docker build -t {{project_name}} ."
-depends = ["cargo-chef"]
+
+[tasks.docker-push]
+description = "Push Docker images"
+run = "docker push -t {{project_name}} ."
+depends = ["docker-build"]
 
 [tasks.e2e]
 description = "Run e2e tests"
-run = '''
-cd e2e
-cargo test
-'''
-depends = ["docker-build"]
+sources = ['Cargo.toml', 'src/**/*.rs'] 
+run = "cargo test"
+dir = "e2e"
 
-[tasks.docker-push]
-description = "Build Docker images"
-run = "docker build -t {{project_name}} ."
-depends = ["test"]
+{% if  "helm" in features -%}
+[tasks.helm-package]
+description = "Package Helm chart"
+dir="helm"
+run = "helm package {{ project_name | kebab_case }}"
+
+[tasks.helm-push]
+description = "Push Helm chart"
+dir="helm"
+run = "helm push {{ project_name | kebab_case }}"
+depends = ["helm-package"]
+{% endif %}
+
+[tasks.post-generate]
+description = "Post generation tasks"
+run = '''
+cargo fmt 
+cargo fix --allow-dirty
+cargo update
+'''
+
+[tasks.generate-local-and-test]
+description = "Generate the project and run tests"
+run = [
+    { task = "generate-local" },
+    { task = "post-generate" },
+    {{ '{ task = "frontend-build" },' if frontend != "none" }}
+    { tasks = ["test","audit","e2e","docker-build","helm-package"] },
+]
+
+[tasks.generate-and-test]
+description = "Generate the project and run tests"
+run = [
+    { task = "generate" },
+    { task = "post-generate" },
+    {{ '{ task = "frontend-build" },' if frontend != "none" }}
+    { tasks = ["test","audit","e2e","docker-build","helm-package"] },
+]
+
+[tasks.ci]
+description = "CI Task"
+run = [
+    {{ '{ task = "frontend-build" },' if frontend != "none" }}
+    { task = "docker-build" },
+    { task = "e2e" },
+    { tasks = ["docker-push","helm-push"] },
+]
