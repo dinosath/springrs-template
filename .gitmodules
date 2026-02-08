@@ -1,6 +1,3 @@
 [submodule "templates"]
 	path = templates
 	url = https://github.com/dinosath/common-templates
-[submodule "{% if 'shadcn-admin-kit'==frontend%}frontend{% endif %}"]
-	path = {% if 'shadcn-admin-kit'==frontend%}frontend{% endif %}
-	url = https://github.com/dinosath/shadcn-admin-kit-template

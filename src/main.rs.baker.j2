@@ -1,21 +1,22 @@
 {{ 'use spring_grpc::GrpcPlugin;' if 'grpc' in protocols }}
 {{ 'use spring::{auto_config, App};' if 'rest' in protocols else 'use spring::App;' }}
-{% if 'sea-orm' in features -%}
-use spring_sea_orm::{SeaOrmPlugin};
-use plugin::SeaOrmMigrationPlugin;
-{% endif -%}
+{{ 'use spring_sea_orm::{SeaOrmPlugin};' if database != 'none' }}
 {{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
 {{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
-
-mod service;
-{% if 'sea-orm' in features -%}
-{% if 'models' in extra_crates -%}
-use models;
-{% else -%}
-mod models;
+{{ 'use services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if use_seaorm_migrations }}
+{% if 'rest' in protocols -%}
+mod controllers {
+    automod::dir!("src/controllers");
+}
 {% endif -%}
-mod plugin;
+{% if database != 'none' -%}
+mod models {
+    automod::dir!(pub "src/models");
+}
 {% endif -%}
+mod services {
+    automod::dir!(pub "src/services");
+}
 
 {{ '#[auto_config(WebConfigurator)]' if 'rest' in protocols -}}
 #[tokio::main]
@@ -25,10 +26,8 @@ async fn main() {
             KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
             KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
         ])
-        {% if 'sea-orm' in features -%}
-        .add_plugin(SeaOrmPlugin)
-        .add_plugin(SeaOrmMigrationPlugin)
-        {% endif -%}
+        {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' }}
+        {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
         {{ '.add_plugin(WebPlugin)' if 'rest' in protocols }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc' in protocols }}

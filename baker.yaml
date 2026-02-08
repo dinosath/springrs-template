@@ -51,7 +51,7 @@ questions:
   use_seaorm_migrations:
     type: bool
     help: Do you want to use SeaORM migrations?
-    default: false
+    default: true
     ask_if: database == 'postgres'
 
   db_schema:
@@ -102,14 +102,6 @@ questions:
     help: Do you want to use crudcrate for generation of rest controllers?
     default: false
     ask_if: rest in protocols
-
-  extra_crates:
-    type: str
-    help: What extra crates do you want to include in the workspace?
-    multiselect: true
-    default: []
-    choices:
-      - models
   
   automod:
     type: bool
