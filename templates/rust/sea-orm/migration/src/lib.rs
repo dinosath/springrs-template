@@ -1,6 +1,9 @@
 pub use sea_orm_migration::prelude::*;
 
 mod m20220101_000001_init;
+mod migrations {
+    automod::dir!("src/migrations");
+}
 
 pub struct Migrator;
 

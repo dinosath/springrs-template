@@ -1,7 +1,6 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
 {% set model = entity_name | plural | pascal_case -%}
-use serde_json::json;
 use spring_web::{get, post, put, patch, delete};
 use spring_web::{
     error::Result,
