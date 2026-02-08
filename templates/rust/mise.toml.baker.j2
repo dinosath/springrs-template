@@ -6,6 +6,9 @@ rust = "latest"
 {{'helm = "latest"' if  "helm" in features }}
 jq = "latest"
 
+[env]
+TEMPLATE = 'axum-template'
+_.file = '.env'
 
 [tasks.merge-entities]
 description = "Merge all entity JSON files into answers.json"
@@ -17,13 +20,13 @@ jq --argjson entities "$entities_json" '.entities = $entities' answers.json > tm
 
 [tasks.generate-local]
 description = "Generate the project files from local repo"
-run = "baker ../axum-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+run = "baker ../$TEMPLATE . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
 sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
 [tasks.generate]
 description = "Generate the project files"
-run = "baker https://github.com/dinosath/axum-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+run = "baker https://github.com/dinosath/$TEMPLATE . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
 sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
