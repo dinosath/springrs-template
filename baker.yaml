@@ -9,7 +9,9 @@ exclude_globs:
   - "sample/**"
   - ".git/**"
   - "target/**"
+
 follow_symlinks: true
+
 questions:
   project_name:
     type: str
@@ -77,10 +79,12 @@ questions:
       - open-telemetry
       - helm
 
-  protocol:
+  protocols:
     type: str
-    help: What protocol to generate the API with?
-    default: rest
+    help: What protocols to generate the API with?
+    multiselect: true
+    default: 
+      - rest
     choices:
       - rest
       - grpc
@@ -97,7 +101,20 @@ questions:
     type: bool
     help: Do you want to use crudcrate for generation of rest controllers?
     default: false
-    ask_if: protocol == 'rest'
+    ask_if: rest in protocols
+
+  extra_crates:
+    type: str
+    help: What extra crates do you want to include in the workspace?
+    multiselect: true
+    default: []
+    choices:
+      - models
+  
+  automod:
+    type: bool
+    help: Do you want to use automod for automatic module generation?
+    default: true
 
   ci_cd:
     type: str

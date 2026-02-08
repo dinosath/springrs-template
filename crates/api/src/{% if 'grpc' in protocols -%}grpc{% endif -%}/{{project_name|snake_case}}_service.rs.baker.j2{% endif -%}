@@ -13,7 +13,11 @@ pub mod {{ message_snake }} {
     pub mod {{ project_name | snake_case }} {
         tonic::include_proto!("{{project_name| snake_case }}");
     }
-    use crate::models::models::{{ message_snake }}::{ActiveModel, Entity, Model};
+{% if 'models' in extra_crates -%}
+    use models::{{ message_snake }}::{ActiveModel, Entity, Model};
+{% else -%}
+    use crate::models::{{ message_snake }}::{ActiveModel, Entity, Model};
+{% endif -%}
     use spring_sea_orm::DbConn;
     use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, ModelTrait, Set};
     use crate::service::grpc_utils::{find_model_by_id, parse_uuid};

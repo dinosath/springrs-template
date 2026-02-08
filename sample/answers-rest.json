@@ -1,8 +1,5 @@
 {
     "project_name": "sample_app",
-    "project_author": "Template Tester",
-    "project_version": "0.1.0",
-    "project_edition": "2021",
     "authentication": "none",
     "database": "postgres",
     "use_sqlx_migrations": true,

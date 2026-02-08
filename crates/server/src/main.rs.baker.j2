@@ -1,19 +1,23 @@
-{{ 'use spring_grpc::GrpcPlugin;' if 'grpc' in features }}
-{{ 'use spring::{auto_config, App};' if 'rest' in features else 'use spring::App;' }}
+{{ 'use spring_grpc::GrpcPlugin;' if 'grpc' in protocols }}
+{{ 'use spring::{auto_config, App};' if 'rest' in protocols else 'use spring::App;' }}
 {% if 'sea-orm' in features -%}
 use spring_sea_orm::{SeaOrmPlugin};
 use plugin::SeaOrmMigrationPlugin;
 {% endif -%}
 {{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
-{{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in features }}
+{{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
 
 mod service;
 {% if 'sea-orm' in features -%}
+{% if 'models' in extra_crates -%}
+use models;
+{% else -%}
 mod models;
+{% endif -%}
 mod plugin;
 {% endif -%}
 
-{{ '#[auto_config(WebConfigurator)]' if 'rest' in features -}}
+{{ '#[auto_config(WebConfigurator)]' if 'rest' in protocols -}}
 #[tokio::main]
 async fn main() {
     App::new()
@@ -25,8 +29,8 @@ async fn main() {
         .add_plugin(SeaOrmPlugin)
         .add_plugin(SeaOrmMigrationPlugin)
         {% endif -%}
-        {{ '.add_plugin(WebPlugin)' if 'rest' in features }}
+        {{ '.add_plugin(WebPlugin)' if 'rest' in protocols }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
-        {{ '.add_plugin(GrpcPlugin)' if 'grpc' in features }}
+        {{ '.add_plugin(GrpcPlugin)' if 'grpc' in protocols }}
         .run().await
 }
