@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, NotSet, IntoActiveModel, ConnectionTrait};
 use sea_orm::EntityLoaderTrait;
 use sea_orm::prelude::*;
+use tracing::debug;
 use crate::app_state::AppState;
 use crate::models::{{ rust_types.identifier(entity_name) }}::{ActiveModel, Entity, Model, ModelEx, {% for name,property in entity.attributes | items | selectattr('1.enum') -%}{{ rust_types.identifier(name) | pascal_case }}{% endfor -%}};
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
@@ -182,6 +183,7 @@ async fn load_item<C>(
 where
     C: ConnectionTrait,
 {
+    debug!("Loading {{ entity_name | snake_case }} with id: {}", id);
     Entity::find_by_id(id)
         .one(db)
         .await
@@ -190,6 +192,7 @@ where
 }
 
 pub async fn list(state: State<AppState>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
     let models = Entity::load()
         {% for name, property in entity.attributes | items -%}
         {%- if macros.is_relation(property)=='true' -%}
@@ -199,6 +202,7 @@ pub async fn list(state: State<AppState>) -> Result<impl IntoResponse, (StatusCo
         .all(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
     let responses: Vec<{{ entity_name | pascal_case }}> = models.into_iter().map(Into::into).collect();
 
     let total = responses.len() as u64;
@@ -212,45 +216,54 @@ pub async fn list(state: State<AppState>) -> Result<impl IntoResponse, (StatusCo
 }
 
 pub async fn create(state: State<AppState>, Json(create): Json<{{ entity_name | pascal_case }}Create>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Creating new {{ entity_name | snake_case }}");
     let active_model:ActiveModel = create.into();
     let model = active_model.insert(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"failed to insert item": e.to_string()}))))?;
+        debug!("Created {{ entity_name | snake_case }} with id: {:?}", model.id);
         let resp: {{ entity_name | pascal_case }} = model.into();
         Ok((StatusCode::CREATED, Json(resp)))
 
 }
 
 pub async fn patch_one(state: State<AppState>, Path(id): Path<i32>, Json(patch): Json<{{ entity_name | pascal_case }}Patch> ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Patching {{ entity_name | snake_case }} with id: {}", id);
     let model = load_item(&state.db, id).await?;
     let mut active_model = model.into_active_model();
     patch.patch_active_model(&mut active_model);
     let model = active_model.update(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"failed to update item": e.to_string()}))))?;
+    debug!("Successfully patched {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{ entity_name | pascal_case }} = model.into();
     Ok(Json(resp))
 }
 
 pub async fn put_one(state: State<AppState>, Path(id): Path<i32>, Json(update): Json<{{ entity_name | pascal_case }}Update>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
     let _ = load_item(&state.db, id).await?;
     let active_model = update.into_active_model(id);
     let model = active_model.update(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"failed to update item": e.to_string()}))))?;
+    debug!("Successfully updated {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{ entity_name | pascal_case }} = model.into();
     Ok(Json(resp))
 }
 
 pub async fn remove(state: State<AppState>, Path(id): Path<i32>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Deleting {{ entity_name | snake_case }} with id: {}", id);
     let model = load_item(&state.db, id).await?;
     model.delete(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    debug!("Successfully deleted {{ entity_name | snake_case }} with id: {}", id);
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn read_one(state: State<AppState>, Path(id): Path<i32>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Fetching {{ entity_name | snake_case }} with id: {}", id);
     let model = Entity::load()
         .filter_by_id(id)
         {% for name, property in entity.attributes | items -%}
@@ -262,6 +275,7 @@ pub async fn read_one(state: State<AppState>, Path(id): Path<i32>) -> Result<imp
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))))?;
+    debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{ entity_name | pascal_case }} = model.into();
     Ok(Json(resp))
 }

@@ -1,4 +1,3 @@
-{% if protocol == 'rest' -%}
 import simpleRestProvider from 'ra-data-simple-rest';
 import type { DataProvider, CreateParams, UpdateParams, RaRecord } from 'ra-core';
 {% if authentication != 'none' -%}
@@ -151,4 +150,3 @@ export const dataProvider: DataProvider = {
     deleteMany: baseDataProvider.deleteMany,
     updateMany: baseDataProvider.updateMany,
 };
-{% endif %}

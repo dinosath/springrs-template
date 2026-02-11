@@ -1,5 +1,5 @@
 import { Admin } from "@/components/admin";
-{% if protocol == 'rest' -%}
+{% if 'rest' in protocols  -%}
 import { dataProvider } from '@/lib/dataProvider';
 {% elif protocol == 'grpc' -%}
 import { grpcDataProvider } from '@/lib/grpcDataProvider';

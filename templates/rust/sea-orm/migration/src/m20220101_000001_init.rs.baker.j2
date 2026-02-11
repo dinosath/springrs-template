@@ -305,13 +305,17 @@ enum {{ entity_name | pascal_case }} {
     #[sea_orm(iden = "{{ table_name }}")]
     Table,
     Id,
+    #[sea_orm(iden = "created_at")]
     CreatedAt,
+    #[sea_orm(iden = "last_updated")]
     LastUpdated,
     {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
     {% for name, property in attributes -%}
     {%- if macros.is_relation(property)=='true' and (macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true') -%}
+    #[sea_orm(iden = "{{ name | snake_case }}_id")]
     {{ name | snake_case | pascal_case }}Id,
     {% else -%}
+    #[sea_orm(iden = "{{ name | snake_case }}")]
     {{ name | snake_case | pascal_case }},
     {% endif -%}
     {% endfor -%}
@@ -329,9 +333,13 @@ enum {{ entity_name | pascal_case }} {
 {% set right_fk = right | foreign_key | trim -%}
 {% set rel_name = relation | trim -%}
 #[derive(DeriveIden)]
+#[sea_orm(iden = "{{ rel_name | snake_case }}")]
 enum {{ rel_name | pascal_case }} {
+    #[sea_orm(iden = "{{ rel_name | snake_case }}")]
     Table,
+    #[sea_orm(iden = "{{ left_fk | snake_case }}")]
     {{ left_fk | pascal_case }},
+    #[sea_orm(iden = "{{ right_fk | snake_case }}")]
     {{ right_fk | pascal_case }},
 }
 

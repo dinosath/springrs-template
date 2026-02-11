@@ -1,188 +1,23 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
-{% set model = entity_name | plural | pascal_case -%}
-use spring_web::{get, post, put, patch, delete};
+{% set model = entity_name | pascal_case -%}
+use spring_web::{get, post, put, delete};
 use spring_web::{
     error::Result,
     extractor::{Path, Component, Json},
     axum::{http::{HeaderMap, HeaderValue, StatusCode}, response::IntoResponse},
 };
-use serde::{Deserialize, Serialize};
-use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, NotSet, IntoActiveModel, ConnectionTrait};
+use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, ConnectionTrait};
 use sea_orm::EntityLoaderTrait;
-use sea_orm::prelude::*;
 use spring_sea_orm::DbConn;
-{% if 'models' in extra_crates -%}
-use models::{{ rust_types.identifier(entity_name) }}::{ActiveModel, Entity, Model, ModelEx, {% for name,property in entity.attributes | items | selectattr('1.enum') -%}{{ rust_types.identifier(name) | pascal_case }}{% endfor -%}};
-{% else -%}
-use crate::models::{{ rust_types.identifier(entity_name) }}::{ActiveModel, Entity, Model, ModelEx, {% for name,property in entity.attributes | items | selectattr('1.enum') -%}{{ rust_types.identifier(name) | pascal_case }}{% endfor -%}};
-{% endif -%}
+use spring::tracing::debug;
+use crate::models::{{ rust_types.identifier(entity_name) }}::{ActiveModel, Entity, Model, {{model}}Create,{{model}}Update,{{model}}Response};
+use crudcrate::MergeIntoActiveModel;
+/**
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
 use super::{ {%- for rel in macros.get_all_relations(entity)|split(',') %}{{ rust_types.identifier(rel| trim | snake_case)  }}::{{rel | pascal_case}} as {{ rel | trim | pascal_case}}{% if not loop.last %}, {% endif -%}{% endfor -%} };
 {% endif -%}
-
-/// Reference to a related entity (only contains id for create/update operations)
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct RelationRef {
-    pub id: {{ rust_types.rust_id_type(id_type) | trim}},
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct {{ entity_name | pascal_case }} {
-    pub id: {{ rust_types.rust_id_type(id_type) | trim}},
-    pub created_at: DateTime,
-    pub last_updated: DateTime,
-    {% for name, property in entity.attributes | items -%}
-    {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
-    pub {{ rust_types.rust_var(name,false) }}: {{ rust_types.get_rust_type(name, property) }} {{- ',' if not loop.last }}
-    {% endfor %}
-}
-
-impl From<Model> for {{ entity_name | pascal_case }} {
-    fn from(model: Model) -> Self {
-        Self {
-            id: model.id,
-            created_at: model.created_at,
-            last_updated: model.last_updated,
-            {% for name, property in entity.attributes | items -%}
-            {{ rust_types.rust_var(name,false) }}: {{ rust_types.from_model_value(name,property) }} {{- ',' if not loop.last }}
-            {% endfor %}
-        }
-    }
-}
-
-impl From<ModelEx> for {{ entity_name | pascal_case }} {
-    fn from(model: ModelEx) -> Self {
-        Self {
-            id: model.id,
-            created_at: model.created_at,
-            last_updated: model.last_updated,
-            {% for name, property in entity.attributes | items -%}
-            {% set var_name = rust_types.rust_var(name,false) -%}
-            {% if property.writeOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property=property)=='true'-%}
-            {{ var_name }}: {{'Some(' if not property.required }}model.{{ var_name }}.into_iter().map({{ macros.get_relation(property) | pascal_case }}::from).collect(){{')' if not property.required}},
-            {% elif macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property=property)=='true'-%}
-            {{ var_name }}: model.{{ var_name }}.into_option().map(|p| Box::new(p.into())){{'.unwrap_or_default()' if property.required}},
-            {% elif property.type -%}
-            {{ var_name }}: model.{{ var_name }},
-            {% endif -%}
-            {% endfor %}
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct {{ entity_name | pascal_case }}Create {
-    {% for name, property in entity.attributes | items -%}
-    {%- if property.readOnly-%}{% continue -%}{%- endif -%}
-    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
-    pub {{ rust_types.rust_var(name,false) }}: {% if not property.required %}Option<{% endif %}RelationRef{% if not property.required %}>{% endif %}{% if not loop.last %},{% endif %}
-    {%- elif macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
-    {# Skip many-to-many and one-to-many in create - they're managed separately #}
-    {%- elif property.type -%}
-    pub {{ rust_types.rust_var(name,false) }}: {{ rust_types.get_rust_type(name, property) }}{% if not loop.last %},{% endif %}
-    {%- endif -%}
-    {% endfor %}
-}
-
-impl From<{{ entity_name | pascal_case }}Create> for ActiveModel {
-    fn from(source: {{ entity_name | pascal_case }}Create) -> Self {
-        ActiveModel {
-            {% for name, property in entity.attributes | items -%}
-            {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
-            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property=property)=='true'-%}
-            {%- if property.required -%}
-            {{ name | snake_case }}_id: Set(source.{{ rust_types.rust_var(name,false) }}.id),
-            {%- else -%}
-            {{ name | snake_case }}_id: source.{{ rust_types.rust_var(name,false) }}.map(|r| Set(Some(r.id))).unwrap_or(NotSet),
-            {%- endif -%}
-            {%- elif property.type  -%}
-            {{ rust_types.rust_var(name,false) }}: Set(source.{{ name | snake_case }}.clone()),
-            {% endif -%}
-            {%- endfor -%}
-            ..Default::default()
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct {{ entity_name | pascal_case }}Update {
-    {% for name, property in entity.attributes | items -%}
-    {%- if property.readOnly-%}{% continue -%}{%- endif -%}
-    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
-    pub {{ rust_types.rust_var(name,false) }}: {% if not property.required %}Option<{% endif %}RelationRef{% if not property.required %}>{% endif %}{% if not loop.last %},{% endif %}
-    {%- elif macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
-    {# Skip many-to-many and one-to-many in update - they're managed separately #}
-    {%- elif property.type -%}
-    pub {{ rust_types.rust_var(name,false) }}: {{ rust_types.get_rust_type(name, property) }}{% if not loop.last %},{% endif %}
-    {%- endif -%}
-    {% endfor %}
-}
-
-impl {{ entity_name | pascal_case }}Update {
-    fn into_active_model(self, id:{{ rust_types.rust_id_type(id_type) | trim}}) -> ActiveModel {
-        ActiveModel {
-            id: Set(id),
-            {% for name, property in entity.attributes | items -%}
-            {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
-            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property=property)=='true'-%}
-            {%- if property.required -%}
-            {{ name | snake_case }}_id: Set(self.{{ rust_types.rust_var(name,false) }}.id),
-            {%- else -%}
-            {{ name | snake_case }}_id: Set(self.{{ rust_types.rust_var(name,false) }}.map(|r| r.id)),
-            {%- endif -%}
-            {% elif property.type  -%}
-            {{ rust_types.rust_var(name,false) }}: Set(self.{{ name | snake_case }}.clone()),
-            {% endif -%}
-            {%- endfor -%}
-            ..Default::default()
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct {{ entity_name | pascal_case }}Patch {
-    {% for name, property in entity.attributes | items -%}
-    {%- if property.readOnly-%}{% continue -%}{%- endif -%}
-    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
-    pub {{ rust_types.rust_var(name,false) }}: Option<RelationRef>{% if not loop.last %},{% endif %}
-    {%- elif macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
-    {# Skip many-to-many and one-to-many in patch - they're managed separately #}
-    {%- elif property.type -%}
-    {%- set base_type = rust_types.get_rust_primitive(name, property) -%}
-    pub {{ rust_types.rust_var(name,false) }}: Option<{{ base_type }}>{% if not loop.last %},{% endif %}
-    {%- endif -%}
-    {% endfor %}
-}
-
-impl {{ entity_name | pascal_case }}Patch {
-    pub fn patch_active_model(&self, active_model: &mut ActiveModel) {
-        {% for name, property in entity.attributes | items -%}
-        {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
-        {%- set var_name = rust_types.rust_var(name,false) -%}
-        {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
-        if let Some(value) = &self.{{ var_name }} {
-            {%- if property.required %}
-            active_model.{{ name | snake_case }}_id = Set(value.id);
-            {%- else %}
-            active_model.{{ name | snake_case }}_id = Set(Some(value.id));
-            {%- endif %}
-        }
-        {%- elif property.type -%}
-        {%- if property.required -%}
-        if let Some(value) = &self.{{ var_name }} {
-            active_model.{{ name | snake_case }} = Set(value.clone());
-        }
-        {%- else -%}
-        if self.{{ var_name }}.is_some() {
-            active_model.{{ name | snake_case }} = Set(self.{{ var_name }}.clone());
-        }
-        {%- endif -%}
-        {%- endif -%}
-        {% endfor %}
-    }
-}
-
+**/
 async fn load_item<C>(
     db: &C,
     id: i32,
@@ -190,6 +25,7 @@ async fn load_item<C>(
 where
     C: ConnectionTrait,
 {
+    debug!("Loading {{ entity_name | snake_case }} with id: {}", id);
     Entity::find_by_id(id)
         .one(db)
         .await
@@ -197,22 +33,20 @@ where
         .ok_or_else(|| spring_web::error::KnownWebError::not_found("not found").into())
 }
 
-#[get("/{{ entity.info.pluralName | kebab_case }}")]
+#[get("/api/{{ entity.info.pluralName | kebab_case }}")]
 pub async fn list(Component(db): Component<DbConn>) -> Result<impl IntoResponse> {
+    debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
     let models = Entity::load()
         {% for name, property in entity.attributes | items -%}
         {%- if macros.is_relation(property)=='true' -%}
-{% if 'models' in extra_crates -%}
-        .with(models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-{% else -%}
         .with(crate::models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-{% endif -%}
         {% endif -%}
         {% endfor -%}
         .all(&db)
         .await
         .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?;
-    let responses: Vec<{{ entity_name | pascal_case }}> = models.into_iter().map(Into::into).collect();
+    debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
+    let responses: Vec<{{ entity_name | pascal_case }}Response> = models.into_iter().map(Into::into).collect();
 
     let total = responses.len() as u64;
     let start: u64 = 0;
@@ -224,50 +58,47 @@ pub async fn list(Component(db): Component<DbConn>) -> Result<impl IntoResponse>
     Ok((StatusCode::OK, headers, Json(responses)))
 }
 
-#[post("/{{ entity.info.pluralName | kebab_case }}")]
-pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{ entity_name | pascal_case }}Create>) -> Result<impl IntoResponse> {
+#[post("/api/{{ entity.info.pluralName | kebab_case }}")]
+pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
+    debug!("Creating new {{ entity_name | snake_case }} - Request: {:?}",create);
     let active_model: ActiveModel = create.into();
     let model = active_model.insert(&db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
-    let resp: {{ entity_name | pascal_case }} = model.into();
+        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?
+        .into_ex();
+    debug!("Created {{ entity_name | snake_case }} with id: {:?}", model.id);
+    let resp: {{model}}Response = model.into();
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
-#[patch("/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn patch_one(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(patch): Json<{{ entity_name | pascal_case }}Patch>) -> Result<impl IntoResponse> {
-    let model = load_item(&db, id).await?;
-    let mut active_model = model.into_active_model();
-    patch.patch_active_model(&mut active_model);
+#[put("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
+pub async fn put_one(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
+    debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
+    let existing_active_model = load_item(&db, id).await?;
+    let active_model = update.merge_into_activemodel(existing_active_model.into()).expect("Failed to merge");
     let model = active_model.update(&db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
-    let resp: {{ entity_name | pascal_case }} = model.into();
+        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?
+        .into_ex();
+    debug!("Successfully updated {{ entity_name | snake_case }} with id: {}", id);
+    let resp: {{model}}Response = model.into();
     Ok(Json(resp))
 }
 
-#[put("/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn put_one(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(update): Json<{{ entity_name | pascal_case }}Update>) -> Result<impl IntoResponse> {
-    let _ = load_item(&db, id).await?;
-    let active_model = update.into_active_model(id);
-    let model = active_model.update(&db)
-        .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
-    let resp: {{ entity_name | pascal_case }} = model.into();
-    Ok(Json(resp))
-}
-
-#[delete("/{{ entity.info.pluralName | kebab_case }}/{id}")]
+#[delete("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
 pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Result<impl IntoResponse> {
+    debug!("Deleting {{ entity_name | snake_case }} with id: {}", id);
     let model = load_item(&db, id).await?;
     model.delete(&db)
         .await
         .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    debug!("Successfully deleted {{ entity_name | snake_case }} with id: {}", id);
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[get("/{{ entity.info.pluralName | kebab_case }}/{id}")]
+#[get("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
 pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Result<impl IntoResponse> {
+    debug!("Fetching {{ entity_name | snake_case }} with id: {}", id);
     let model = Entity::load()
         .filter_by_id(id)
         {% for name, property in entity.attributes | items -%}
@@ -283,6 +114,7 @@ pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>) -> 
         .await
         .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?
         .ok_or_else(|| spring_web::error::KnownWebError::not_found("not found"))?;
-    let resp: {{ entity_name | pascal_case }} = model.into();
+    debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", id);
+    let resp: {{model}}Response = model.into();
     Ok(Json(resp))
 }

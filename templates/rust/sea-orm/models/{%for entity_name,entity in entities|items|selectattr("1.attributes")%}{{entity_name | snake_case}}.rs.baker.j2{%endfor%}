@@ -1,27 +1,33 @@
 {% import "macros.jinja" as macros-%}
 {% import "rust/types.jinja" as rust_types-%}
 use sea_orm::entity::prelude::*;
-{{ 'use serde::{Deserialize, Serialize};' if entity.attributes | items | selectattr('1.enum') | length > 0 }}
+use serde::{Deserialize, Serialize};
+use crudcrate::{ToCreateModel, ToUpdateModel, ToResponseModel};
+{{ 'use utoipa::ToSchema;' if entity.attributes | items | selectattr('1.enum') | length >0 }}
 
 {% for name,property in entity.attributes | items | selectattr('1.enum') -%}
-#[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, ToSchema)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ name | snake_case }}")]
 pub enum {{ name | pascal_case }}{
-        {% for enum in property.enum -%}
-        {{ '#[default]' if (property.default and enum == property.default) or (not property.default and loop.first) }}
-        #[sea_orm(string_value = "{{ enum | snake_case }}")]
-        {{ rust_types.rust_var(enum,true) }}{%- if not loop.last -%},{% endif -%}
-        {% endfor -%}
+    {% for enum in property.enum -%}
+    {{ '#[default]' if (property.default and enum == property.default) or (not property.default and loop.first) }}
+    #[sea_orm(string_value = "{{ enum | snake_case }}")]
+    #[serde(rename = "{{ enum }}")]
+    {{ rust_types.rust_var(enum,true) }}{%- if not loop.last -%},{% endif %}
+    {% endfor %}
 }
-{% endfor -%}
+{% endfor %}
 
 #[sea_orm::model]
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel, ToCreateModel, ToUpdateModel, ToResponseModel)]
 #[sea_orm(table_name = "{{ entity_name | table_case }}")]
+#[crudcrate(api_struct = "{{ entity_name | pascal_case }}")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: {{ rust_types.rust_id_type(id_type) }},
+    #[crudcrate(exclude(create, update))]
     pub created_at: DateTime,
+    #[crudcrate(exclude(create, update))]
     pub last_updated: DateTime,
     {% for name, property in entity.attributes | items -%}
     {{ rust_types.seaorm_derive(name, property) | trim -}}
@@ -32,7 +38,7 @@ pub struct Model {
     {% else -%}
     pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
     {% endif -%}
-    {% endfor -%}
+    {% endfor %}
 }
 
 impl ActiveModelBehavior for ActiveModel {}
