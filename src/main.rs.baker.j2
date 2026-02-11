@@ -17,6 +17,11 @@ mod models {
 mod services {
     automod::dir!(pub "src/services");
 }
+{% if frontend!='none' -%}
+use static_serve::embed_assets;
+
+embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
+{%- endif %}
 
 {{ '#[auto_config(WebConfigurator)]' if 'rest' in protocols -}}
 #[tokio::main]
@@ -31,5 +36,6 @@ async fn main() {
         {{ '.add_plugin(WebPlugin)' if 'rest' in protocols }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc' in protocols }}
+        {{ '.add_router(static_router())' if frontend!='none' }}
         .run().await
 }
