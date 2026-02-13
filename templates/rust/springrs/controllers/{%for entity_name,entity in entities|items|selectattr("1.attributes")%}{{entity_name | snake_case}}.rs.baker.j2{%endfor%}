@@ -12,7 +12,6 @@ use sea_orm::EntityLoaderTrait;
 use spring_sea_orm::DbConn;
 use spring::tracing::debug;
 use crate::models::{{ rust_types.identifier(entity_name) }}::{ActiveModel, Entity, Model, {{model}}Create,{{model}}Update,{{model}}Response};
-use crudcrate::MergeIntoActiveModel;
 /**
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
 use super::{ {%- for rel in macros.get_all_relations(entity)|split(',') %}{{ rust_types.identifier(rel| trim | snake_case)  }}::{{rel | pascal_case}} as {{ rel | trim | pascal_case}}{% if not loop.last %}, {% endif -%}{% endfor -%} };
@@ -72,10 +71,10 @@ pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{model
 }
 
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn put_one(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
+pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
     debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
     let existing_active_model = load_item(&db, id).await?;
-    let active_model = update.merge_into_activemodel(existing_active_model.into()).expect("Failed to merge");
+    let active_model = update.merge_into(existing_active_model.into()).expect("Failed to merge");
     let model = active_model.update(&db)
         .await
         .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?
@@ -103,11 +102,11 @@ pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>) -> 
         .filter_by_id(id)
         {% for name, property in entity.attributes | items -%}
         {%- if macros.is_relation(property)=='true' -%}
-{% if 'models' in extra_crates -%}
+        {% if 'models' in extra_crates -%}
         .with(models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-{% else -%}
+        {% else -%}
         .with(crate::models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-{% endif -%}
+        {% endif -%}
         {% endif -%}
         {% endfor -%}
         .one(&db)

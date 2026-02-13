@@ -104,8 +104,9 @@ description = "Generate the project and run tests"
 run = [
     { task = "generate-local" },
     { task = "post-generate" },
+    { task = "cargo-chef" },
     {{ '{ task = "frontend-build" },' if frontend != "none" }}
-    { tasks = ["test","audit","e2e","docker-build","helm-package"] },
+    { tasks = ["test","audit","e2e","docker-build"{{',"helm-package"' if "helm" in features }}] },
 ]
 
 [tasks.generate-and-test]
@@ -113,8 +114,9 @@ description = "Generate the project and run tests"
 run = [
     { task = "generate" },
     { task = "post-generate" },
+    { task = "cargo-chef" },
     {{ '{ task = "frontend-build" },' if frontend != "none" }}
-    { tasks = ["test","audit","e2e","docker-build","helm-package"] },
+    { tasks = ["test","audit","e2e","docker-build"{{',"helm-package"' if "helm" in features }}] },
 ]
 
 [tasks.ci]
@@ -123,5 +125,5 @@ run = [
     {{ '{ task = "frontend-build" },' if frontend != "none" }}
     { task = "docker-build" },
     { task = "e2e" },
-    { tasks = ["docker-push","helm-push"] },
+    { tasks = ["docker-push"{{',"helm-push"' if "helm" in features }}] },
 ]

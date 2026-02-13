@@ -3,10 +3,9 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use crudcrate::{ToCreateModel, ToUpdateModel, ToResponseModel};
-{{ 'use utoipa::ToSchema;' if entity.attributes | items | selectattr('1.enum') | length >0 }}
 
 {% for name,property in entity.attributes | items | selectattr('1.enum') -%}
-#[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, ToSchema)]
+#[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ name | snake_case }}")]
 pub enum {{ name | pascal_case }}{
     {% for enum in property.enum -%}
@@ -21,7 +20,7 @@ pub enum {{ name | pascal_case }}{
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel, ToCreateModel, ToUpdateModel, ToResponseModel)]
 #[sea_orm(table_name = "{{ entity_name | table_case }}")]
-#[crudcrate(api_struct = "{{ entity_name | pascal_case }}")]
+#[crudcrate(api_struct = "{{ entity_name | pascal_case }}", skip_utoipa)]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: {{ rust_types.rust_id_type(id_type) }},
