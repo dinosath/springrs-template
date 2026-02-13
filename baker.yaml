@@ -100,7 +100,7 @@ questions:
   crudcrate:
     type: bool
     help: Do you want to use crudcrate for generation of rest controllers?
-    default: false
+    default: true
     ask_if: rest in protocols
   
   automod:
