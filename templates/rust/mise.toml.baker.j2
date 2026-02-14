@@ -1,3 +1,5 @@
+min_version = "2024.1.0"
+
 [tools]
 rust = "latest"
 "github:aliev/baker" = "latest"
@@ -95,35 +97,31 @@ depends = ["helm-package"]
 description = "Post generation tasks"
 run = '''
 cargo fmt 
-cargo fix --allow-dirty
+cargo fix --allow-dirty --allow-no-vcs
 cargo update
 '''
 
-[tasks.generate-local-and-test]
-description = "Generate the project and run tests"
+[tasks.build-and-test]
+description = "Build and test the project"
 run = [
-    { task = "generate-local" },
     { task = "post-generate" },
     { task = "cargo-chef" },
     {{ '{ task = "frontend-build" },' if frontend != "none" }}
     { tasks = ["test","audit","e2e","docker-build"{{',"helm-package"' if "helm" in features }}] },
 ]
 
+[tasks.generate-local-and-test]
+description = "Generate the project and run tests"
+depends = ["generate-local", "build-and-test"]
+
 [tasks.generate-and-test]
 description = "Generate the project and run tests"
-run = [
-    { task = "generate" },
-    { task = "post-generate" },
-    { task = "cargo-chef" },
-    {{ '{ task = "frontend-build" },' if frontend != "none" }}
-    { tasks = ["test","audit","e2e","docker-build"{{',"helm-package"' if "helm" in features }}] },
-]
+depends = ["generate", "build-and-test"]
 
 [tasks.ci]
 description = "CI Task"
 run = [
     {{ '{ task = "frontend-build" },' if frontend != "none" }}
     { task = "docker-build" },
-    { task = "e2e" },
     { tasks = ["docker-push"{{',"helm-push"' if "helm" in features }}] },
 ]

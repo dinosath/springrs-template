@@ -1,38 +1,38 @@
 [tools]
 "github:aliev/baker" = "latest"
 
+[env]
+MISE_TRUSTED_CONFIG_PATHS = "$PWD/generated"
+
 [tasks.generate]
 description = "Generate the project files"
 run = "baker . ./generated/$ANSWER --answers-file samples/answers-$ANSWER.json --force --non-interactive --skip-confirms all"
 
 [tasks.e2e]
 description = "Run e2e tests"
-run = '''
-cd generated/$ANSWER
-mise run e2e
-'''
+run = "(cd generated/$ANSWER && mise trust && mise run build-and-test)"
 
 [tasks.rest]
 description = "Generate and build rest sample"
 env.ANSWER = "rest"
-run = ["mise run generate", "mise run e2e"]
+run = [{ task = "generate"},{ task = "e2e" }]
 
 
 [tasks.rest-jwt]
 description = "Generate and build rest-jwt sample"
 env.ANSWER = "rest-jwt"
-run = ["mise run generate", "mise run e2e"] 
+run = [{ task = "generate"},{ task = "e2e" }]
 
 [tasks.rest-shadcn]
 description = "Generate and build rest-shadcn sample"
 env.ANSWER = "rest-shadcn"
-run = ["mise run generate", "mise run e2e"]
+run = [{ task = "generate"},{ task = "e2e" }]
 
 [tasks.grpc]
 description = "Generate and build grpc sample"
 env.ANSWER = "grpc"
-run = ["mise run generate", "mise run e2e"]
+run = [{ task = "generate"},{ task = "e2e" }]
 
 [tasks.all]
 description = "Generate and build all samples"
-run = ["mise run rest", "mise run rest-jwt", "mise run rest-shadcn", "mise run grpc"]
+depends = ["rest", "rest-jwt", "rest-shadcn", "grpc"]
