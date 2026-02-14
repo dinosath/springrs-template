@@ -34,8 +34,7 @@ serde_with = "3.16"
 spring = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}
 {{ 'spring-opentelemetry = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}' if 'open-telemetry' in features }}
 {% if database=='postgres' -%}
-# spring-sea-orm = { version = "=0.4.4", features = ["postgres","with-web",] }
-spring-sea-orm = { git="https://github.com/dinosath/spring-rs",branch="seaorm-v2", default-features = false, features = ["postgres","with-web","runtime-tokio-rustls"] }
+spring-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="seaorm-v2", default-features = false, features = ["postgres","with-web","runtime-tokio-rustls"] }
 sea-orm = { version = "2.0.0-rc.32", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
 {% endif -%}
 {{ 'spring-web = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}' if 'rest' in protocols }}
