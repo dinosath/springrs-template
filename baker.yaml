@@ -97,16 +97,27 @@ questions:
       - shadcn-admin-kit
       - none
 
-  crudcrate:
-    type: bool
-    help: Do you want to use crudcrate for generation of rest controllers?
-    default: true
-    ask_if: rest in protocols
-  
   automod:
     type: bool
     help: Do you want to use automod for automatic module generation?
     default: true
+  
+  docker_hardened_images:
+    type: bool
+    help: Do you want to use hardened images for Docker?
+    default: true
+  
+  upx:
+    type: bool
+    help: Do you want to use UPX to compress the binary in the Docker image?
+    default: true
+  
+  include_in_dockerfile:
+    type: str
+    help: "Files to include in the Docker image. Comma-separated list; each entry is 'source' (copies to the same path) or 'source:target' (e.g. config or config/app.toml:/app/config/app.toml)."
+    default: "config"
+    validation:
+      condition: "include_in_dockerfile|regex('^$|^[^,\\s]+(:[^,\\s]+)?(,[^,\\s]+(:[^,\\s]+)?)*$')"
 
   ci_cd:
     type: str

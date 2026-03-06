@@ -3,9 +3,10 @@
     "authentication": "none",
     "database": "postgres",
     "use_sqlx_migrations": true,
-    "features": ["open-telemetry", "helm"],
+    "features": ["open-telemetry", "helm","docker_hardened_images"],
     "protocol": "rest",
     "static_includes": [],
+    "include_in_dockerfile": "config",
     "entities": {
         "Profile": {
             "kind": "collectionType",

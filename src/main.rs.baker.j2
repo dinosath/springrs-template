@@ -1,8 +1,9 @@
-{{ 'use spring_grpc::GrpcPlugin;' if 'grpc' in protocols }}
-{{ 'use spring::{auto_config, App};' if 'rest' in protocols else 'use spring::App;' }}
-{{ 'use spring_sea_orm::{SeaOrmPlugin};' if database != 'none' }}
-{{ 'use spring_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
-{{ 'use spring_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
+use mimalloc::MiMalloc;
+{{ 'use summer_grpc::GrpcPlugin;' if 'grpc' in protocols }}
+{{ 'use summer::{auto_config, App};' if 'rest' in protocols else 'use summer::App;' }}
+{{ 'use summer_sea_orm::{SeaOrmPlugin};' if database != 'none' }}
+{{ 'use summer_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
+{{ 'use summer_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
 {{ 'use services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if use_seaorm_migrations }}
 {% if 'rest' in protocols -%}
 mod controllers {
@@ -22,6 +23,9 @@ use static_serve::embed_assets;
 
 embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
 {%- endif %}
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 {{ '#[auto_config(WebConfigurator)]' if 'rest' in protocols -}}
 #[tokio::main]

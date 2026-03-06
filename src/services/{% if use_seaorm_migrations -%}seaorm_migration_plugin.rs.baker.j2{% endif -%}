@@ -1,8 +1,8 @@
-use spring::async_trait;
-use spring::plugin::ComponentRegistry;
-use spring::tracing::{error};
-use spring::{app::AppBuilder, plugin::Plugin};
-use spring_sea_orm::{DbConn, SeaOrmPlugin};
+use summer::async_trait;
+use summer::plugin::ComponentRegistry;
+use summer::tracing::{error};
+use summer::{app::AppBuilder, plugin::Plugin};
+use summer_sea_orm::{DbConn, SeaOrmPlugin};
 use migration::{Migrator, MigratorTrait};
 pub struct SeaOrmMigrationPlugin;
 

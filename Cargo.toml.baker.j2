@@ -13,43 +13,44 @@ panic = "abort"
 
 [workspace]
 exclude = ["e2e"]
-{% if use_seaorm_migrations -%}
-members = ["migration"]
+{{ 'members = ["migration"]' if use_seaorm_migrations }}
 
 [workspace.dependencies]
 automod = "1.0"
-sea-orm-migration = { version = "2.0.0-rc.32", features = ["runtime-tokio-rustls", "sqlx-postgres"], default-features = false }
-tokio = { version = "1.44", features = ["full", "tracing"] }
-{% endif %}
+{{ 'sea-orm-migration = { version = "2.0.0-rc.35", features = ["runtime-tokio-rustls", "sqlx-postgres"], default-features = false }' if use_seaorm_migrations }}
+tokio = { version = "1", features = ["full"] }
 
 [dependencies]
 automod.workspace = true
 {{ 'axum = "0.8"' if frontend != 'none' }}
 anyhow = "1.0"
-crudcrate = {git="https://github.com/dinosath/crudcrate", branch = "seaorm2", default-features = false, features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
 {{ 'migration = { path = "migration" }' if use_seaorm_migrations }}
 serde = "1.0"
 serde_json = "1.0"
 serde_with = "3.16"
-spring = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}
-{{ 'spring-opentelemetry = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}' if 'open-telemetry' in features }}
+#summer = "0.5"
+summer = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}
+{{ 'summer-opentelemetry = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}' if 'open-telemetry' in features }}
 {% if database=='postgres' -%}
-spring-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="seaorm-v2", default-features = false, features = ["postgres","with-web","runtime-tokio-rustls"] }
-sea-orm = { version = "2.0.0-rc.32", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
+#summer-sea-orm = { version = "0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
+summer-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls", version="0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
+sea-orm = { version = "2.0.0-rc.35", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
 {% endif -%}
-{{ 'spring-web = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}' if 'rest' in protocols }}
+{{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}' if 'rest' in protocols }}
 {{ 'static-serve = "0.5"' if frontend != 'none' }}
 {% if 'grpc' in protocols -%}
-spring-grpc = {git="https://github.com/dinosath/spring-rs", branch="seaorm-v2"}
+summer-grpc = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}
 prost = "0.13"
 tonic = "0.12"
 prost-types = "0.13"
 {% endif %}
 tokio.workspace = true
+mimalloc = { version = "0.1.48", features = ["v3"] }
 
 [dev-dependencies]
-testcontainers = "0.26"
-testcontainers-modules = { version = "0.14", features = ["postgres"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
 reqwest = { version = "0.13", features = ["json", "cookies"], default-features = false }
 serial_test = "3"
 
