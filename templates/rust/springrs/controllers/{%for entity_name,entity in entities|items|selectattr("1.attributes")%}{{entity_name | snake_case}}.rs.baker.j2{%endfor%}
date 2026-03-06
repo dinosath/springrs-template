@@ -1,17 +1,16 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
 {% set model = entity_name | pascal_case -%}
-use spring_web::{get, post, put, delete};
-use spring_web::{
+use summer_web::{get, post, put, delete};
+use summer_web::{
     error::Result,
     extractor::{Path, Component, Json},
     axum::{http::{HeaderMap, HeaderValue, StatusCode}, response::IntoResponse},
 };
-use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, ConnectionTrait};
-use sea_orm::EntityLoaderTrait;
-use spring_sea_orm::DbConn;
-use spring::tracing::debug;
-use crate::models::{{ rust_types.identifier(entity_name) }}::{ActiveModel, Entity, Model, {{model}}Create,{{model}}Update,{{model}}Response};
+use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait};
+use summer_sea_orm::DbConn;
+use summer::tracing::debug;
+use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, {{model}}Create,{{model}}Update,{{model}}Response};
 /**
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
 use super::{ {%- for rel in macros.get_all_relations(entity)|split(',') %}{{ rust_types.identifier(rel| trim | snake_case)  }}::{{rel | pascal_case}} as {{ rel | trim | pascal_case}}{% if not loop.last %}, {% endif -%}{% endfor -%} };
@@ -28,22 +27,17 @@ where
     Entity::find_by_id(id)
         .one(db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?
-        .ok_or_else(|| spring_web::error::KnownWebError::not_found("not found").into())
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?
+        .ok_or_else(|| summer_web::error::KnownWebError::not_found("not found").into())
 }
 
 #[get("/api/{{ entity.info.pluralName | kebab_case }}")]
 pub async fn list(Component(db): Component<DbConn>) -> Result<impl IntoResponse> {
     debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
-    let models = Entity::load()
-        {% for name, property in entity.attributes | items -%}
-        {%- if macros.is_relation(property)=='true' -%}
-        .with(crate::models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-        {% endif -%}
-        {% endfor -%}
+    let models = Entity::find()
         .all(&db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
     let responses: Vec<{{ entity_name | pascal_case }}Response> = models.into_iter().map(Into::into).collect();
 
@@ -60,11 +54,10 @@ pub async fn list(Component(db): Component<DbConn>) -> Result<impl IntoResponse>
 #[post("/api/{{ entity.info.pluralName | kebab_case }}")]
 pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
     debug!("Creating new {{ entity_name | snake_case }} - Request: {:?}",create);
-    let active_model: ActiveModel = create.into();
+    let active_model = create.into_active_model();
     let model = active_model.insert(&db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?
-        .into_ex();
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
     debug!("Created {{ entity_name | snake_case }} with id: {:?}", model.id);
     let resp: {{model}}Response = model.into();
     Ok((StatusCode::CREATED, Json(resp)))
@@ -73,12 +66,12 @@ pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{model
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
 pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
     debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
-    let existing_active_model = load_item(&db, id).await?;
-    let active_model = update.merge_into(existing_active_model.into()).expect("Failed to merge");
+    let _ = load_item(&db, id).await?;
+    let mut active_model = update.into_active_model();
+    active_model.id = Set(id);
     let model = active_model.update(&db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?
-        .into_ex();
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
     debug!("Successfully updated {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{model}}Response = model.into();
     Ok(Json(resp))
@@ -90,7 +83,7 @@ pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Re
     let model = load_item(&db, id).await?;
     model.delete(&db)
         .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     debug!("Successfully deleted {{ entity_name | snake_case }} with id: {}", id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -98,21 +91,7 @@ pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Re
 #[get("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
 pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Result<impl IntoResponse> {
     debug!("Fetching {{ entity_name | snake_case }} with id: {}", id);
-    let model = Entity::load()
-        .filter_by_id(id)
-        {% for name, property in entity.attributes | items -%}
-        {%- if macros.is_relation(property)=='true' -%}
-        {% if 'models' in extra_crates -%}
-        .with(models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-        {% else -%}
-        .with(crate::models::{{ rust_types.identifier(macros.get_relation(property)) }}::Entity)
-        {% endif -%}
-        {% endif -%}
-        {% endfor -%}
-        .one(&db)
-        .await
-        .map_err(|e| spring_web::error::KnownWebError::internal_server_error(e.to_string()))?
-        .ok_or_else(|| spring_web::error::KnownWebError::not_found("not found"))?;
+    let model = load_item(&db, id).await?;
     debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{model}}Response = model.into();
     Ok(Json(resp))

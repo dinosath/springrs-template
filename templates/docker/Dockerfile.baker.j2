@@ -16,12 +16,26 @@ RUN apk add --no-cache protobuf-dev protoc
 {% endif -%}
 
 RUN cargo build --release
-RUN upx --best --lzma /app/target/release/{{project_name}}
 
-{% set runtime_base_image = "dhi.io/static:20251003-alpine3.23" if docker_hardened_images in features else "gcr.io/distroless/static-debian13" -%}
+{% if upx -%}
+RUN upx --best --lzma /app/target/release/{{project_name}}
+{% endif -%}
+
+{% set runtime_base_image = "dhi.io/static:20251003-alpine3.23" if docker_hardened_images else "gcr.io/distroless/static-debian13" -%}
 FROM {{ runtime_base_image }} AS runtime
 COPY --from=builder /app/target/release/{{project_name}} /{{project_name}}
+{% if include_in_dockerfile -%}
 
+{% for item in include_in_dockerfile|split(',') -%}
+{% set parts = item|trim|split(':')|list -%}
+{% if parts|length == 2 -%}
+COPY --from=builder /app/{{ parts[0]|trim }} {{ parts[1]|trim }}
+{% else -%}
+COPY --from=builder /app/{{ item|trim }} {{ item|trim }}
+{% endif -%}
+{% endfor -%}
+
+{% endif -%}
 EXPOSE 8080
 
 ENTRYPOINT ["/{{project_name}}"]
