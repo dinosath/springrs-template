@@ -12,7 +12,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-{% if protocol == 'rest' -%}
+{% if 'rest' in protocols -%}
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
@@ -23,7 +23,7 @@ export default defineConfig({
         changeOrigin: true,
       },
 {% endif -%}
-{% elif protocol == 'grpc' -%}
+{% elif 'grpc' in protocols -%}
       '/{{ project_name | snake_case }}': {
         target: 'http://localhost:8080',
         changeOrigin: true,

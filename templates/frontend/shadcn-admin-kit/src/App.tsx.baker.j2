@@ -1,7 +1,7 @@
 import { Admin } from "@/components/admin";
 {% if 'rest' in protocols  -%}
 import { dataProvider } from '@/lib/dataProvider';
-{% elif protocol == 'grpc' -%}
+{% elif 'grpc' in protocols -%}
 import { grpcDataProvider } from '@/lib/grpcDataProvider';
 {% endif -%}
 {% if authentication != 'none' -%}
@@ -16,7 +16,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 import {{ entity_name | camel_case }} from "./resources/{{ entity_name | snake_case }}"
 {% endfor %}
 
-{% if protocol == 'grpc' -%}
+{% if 'grpc' in protocols -%}
 const dataProvider = grpcDataProvider;
 {% endif %}
 

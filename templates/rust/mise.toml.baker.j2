@@ -4,7 +4,8 @@ min_version = "2024.1.0"
 rust = "latest"
 "github:aliev/baker" = "latest"
 "cargo:cargo-chef" = "latest"
-{{'protoc = "latest"' if protocol == "grpc" }}
+"cargo:cargo-deny" = "latest"
+{{'protoc = "latest"' if 'grpc' in protocols }}
 {{'helm = "latest"' if  "helm" in features }}
 jq = "latest"
 
@@ -79,12 +80,13 @@ description = "Run e2e tests"
 sources = ['Cargo.toml', 'src/**/*.rs'] 
 run = "cargo test"
 dir = "e2e"
+depends = ["docker-build"]
 
 {% if  "helm" in features -%}
 [tasks.helm-package]
 description = "Package Helm chart"
 dir="helm"
-run = "helm package {{ project_name | kebab_case }}"
+run = "helm package ."
 
 [tasks.helm-push]
 description = "Push Helm chart"

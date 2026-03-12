@@ -14,9 +14,19 @@ futures = "0.3"
 rstest = "0.23"
 env_logger = "0.11"
 log = "0.4"
+{% if 'grpc' in protocols %}
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+prost-types = "0.13"
+{% endif %}
 {% if frontend != 'none' %}
 playwright-rs = "0.8"
 {% endif %}
 
 [dev-dependencies]
 tokio-test = "0.4"
+{% if 'grpc' in protocols %}
+
+[build-dependencies]
+tonic-build = "0.12"
+{% endif %}

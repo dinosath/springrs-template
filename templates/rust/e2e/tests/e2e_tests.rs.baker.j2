@@ -1,11 +1,91 @@
+{% import "macros.jinja" as macros -%}
+{% if 'rest' in protocols %}
 use e2e::{base_url, http_client};
+{% endif %}
 {% if frontend != 'none' %}
 use e2e::{browser, TestBrowser};
 {% endif %}
 use rstest::rstest;
+{% if 'rest' in protocols %}
+use serde_json::{json, Value};
 
 // ============================================================================
-// API Tests - Always run (container-based)
+// Shared helpers
+// ============================================================================
+
+fn extract_id(val: &Value) -> i64 {
+    val["id"].as_i64()
+        .or_else(|| val["id"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or_else(|| panic!("no id in response: {:?}", val))
+}
+{% endif %}
+
+{% if 'rest' in protocols %}
+async fn api_post(client: &reqwest::Client, url: &str, body: &Value) -> Value {
+    let resp = client.post(url).json(body).send().await
+        .unwrap_or_else(|e| panic!("POST {} failed: {}", url, e));
+    assert!(
+        resp.status().is_success(),
+        "POST {} returned {}: {:?}", url, resp.status(), resp.text().await.unwrap_or_default()
+    );
+    resp.json::<Value>().await.unwrap_or_else(|e| panic!("parse POST {} body: {}", url, e))
+}
+
+// ============================================================================
+// Per-entity setup helpers  (create entity + any required FK dependencies)
+// ============================================================================
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_plural = entity.info.pluralName | kebab_case -%}
+async fn setup_{{ entity_snake }}(base_url: &str, client: &reqwest::Client) -> Value {
+    {% for attr_name, attr_prop in entity.attributes | items -%}
+    {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
+    let {{ attr_name | snake_case }}_dep = setup_{{ attr_prop.target | snake_case }}(base_url, client).await;
+    let {{ attr_name | snake_case }}_id = extract_id(&{{ attr_name | snake_case }}_dep);
+    {% endif -%}
+    {% endfor -%}
+    let body = json!({
+        {% for attr_name, attr_prop in entity.attributes | items -%}
+        {% if attr_prop.type == 'relation' -%}
+            {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
+        "{{ attr_name | snake_case }}_id": {{ attr_name | snake_case }}_id,
+            {% endif -%}
+        {% elif attr_name == 'created_at' or attr_name == 'last_updated' -%}
+        {# auto-managed – skip #}
+        {% elif attr_prop.enum -%}
+        "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] }}",
+        {% elif attr_prop.type == 'string' -%}
+            {% if attr_prop.format == 'email' -%}
+        "{{ attr_name | snake_case }}": "test_{{ entity_snake }}@example.com",
+            {% elif attr_prop.format == 'url' or attr_prop.format == 'uri' -%}
+        "{{ attr_name | snake_case }}": "https://example.com/{{ entity_snake }}",
+            {% elif attr_prop.format == 'date-time' or attr_prop.format == 'date' -%}
+        {# datetime – only set if required #}
+            {% if attr_prop.required -%}
+        "{{ attr_name | snake_case }}": "2024-01-01T00:00:00",
+            {% endif -%}
+            {% else -%}
+        "{{ attr_name | snake_case }}": "test_{{ entity_snake }}_{{ attr_name | snake_case }}",
+            {% endif -%}
+        {% elif attr_prop.type == 'text' -%}
+        "{{ attr_name | snake_case }}": "test {{ entity_snake }} {{ attr_name | snake_case }} content",
+        {% elif attr_prop.type == 'integer' -%}
+        "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+        {% elif attr_prop.type == 'number' -%}
+        "{{ attr_name | snake_case }}": 1.0,
+        {% elif attr_prop.type == 'boolean' -%}
+        "{{ attr_name | snake_case }}": {{ attr_prop.default | default(true) | lower }},
+        {% endif -%}
+        {% endfor -%}
+    });
+    api_post(client, &format!("{}/api/{{ entity_plural }}", base_url), &body).await
+}
+
+{% endfor -%}
+
+// ============================================================================
+// Health check
 // ============================================================================
 
 #[rstest]
@@ -15,15 +95,319 @@ async fn test_api_health(
     http_client: reqwest::Client,
 ) {
     let base_url = base_url.await;
-    
     let response = http_client
         .get(format!("{}/api/health", base_url))
         .send()
         .await
         .expect("Failed to call health endpoint");
-    
     assert!(response.status().is_success(), "Health endpoint should return success");
 }
+
+// ============================================================================
+// CRUD tests – one module per entity
+// ============================================================================
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_plural = entity.info.pluralName | kebab_case -%}
+mod {{ entity_snake }}_crud {
+    use super::*;
+    use e2e::{base_url, http_client};
+    use rstest::rstest;
+
+    #[rstest]
+    #[tokio::test]
+    async fn create(#[future] base_url: String, http_client: reqwest::Client) {
+        let base_url = base_url.await;
+        let resp = setup_{{ entity_snake }}(&base_url, &http_client).await;
+        assert!(resp["id"].as_i64().is_some() || resp["id"].as_str().is_some(),
+            "Expected id in create response: {:?}", resp);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn list(#[future] base_url: String, http_client: reqwest::Client) {
+        let base_url = base_url.await;
+        // Ensure at least one item exists
+        let _ = setup_{{ entity_snake }}(&base_url, &http_client).await;
+
+        let resp = http_client
+            .get(format!("{}/api/{{ entity_plural }}", base_url))
+            .send().await.expect("GET {{ entity_plural }} failed");
+        assert!(resp.status().is_success(), "List {{ entity_plural }} failed: {}", resp.status());
+        let body: Value = resp.json().await.expect("parse list body");
+        assert!(body.is_array(), "Expected array response for {{ entity_plural }}");
+        assert!(!body.as_array().unwrap().is_empty(), "Expected non-empty list for {{ entity_plural }}");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn read_one(#[future] base_url: String, http_client: reqwest::Client) {
+        let base_url = base_url.await;
+        let created = setup_{{ entity_snake }}(&base_url, &http_client).await;
+        let id = extract_id(&created);
+
+        let resp = http_client
+            .get(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
+            .send().await.expect("GET {{ entity_plural }}/{id} failed");
+        assert!(resp.status().is_success(), "read_one {{ entity_snake }} failed: {}", resp.status());
+        let body: Value = resp.json().await.expect("parse read_one body");
+        assert_eq!(body["id"].as_i64().unwrap_or(0), id, "returned id mismatch");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn update(#[future] base_url: String, http_client: reqwest::Client) {
+        let base_url = base_url.await;
+        let created = setup_{{ entity_snake }}(&base_url, &http_client).await;
+        let id = extract_id(&created);
+
+        let update_body = json!({
+            {% for attr_name, attr_prop in entity.attributes | items -%}
+            {% if attr_prop.type == 'relation' -%}
+                {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
+            "{{ attr_name | snake_case }}_id": created["{{ attr_name | snake_case }}_id"],
+                {% endif -%}
+            {% elif attr_name == 'created_at' or attr_name == 'last_updated' -%}
+            {% elif attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] }}",
+            {% elif attr_prop.type == 'string' -%}
+                {% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "updated_{{ entity_snake }}@example.com",
+                {% elif attr_prop.format == 'url' or attr_prop.format == 'uri' -%}
+            "{{ attr_name | snake_case }}": "https://example.com/updated/{{ entity_snake }}",
+                {% elif attr_prop.format == 'date-time' or attr_prop.format == 'date' -%}
+            {% if attr_prop.required -%}
+            "{{ attr_name | snake_case }}": "2024-06-01T00:00:00",
+            {% endif -%}
+                {% else -%}
+            "{{ attr_name | snake_case }}": "updated_{{ entity_snake }}_{{ attr_name | snake_case }}",
+                {% endif -%}
+            {% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "updated {{ entity_snake }} {{ attr_name | snake_case }} content",
+            {% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(2) }},
+            {% elif attr_prop.type == 'number' -%}
+            "{{ attr_name | snake_case }}": 2.0,
+            {% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(true) | lower }},
+            {% endif -%}
+            {% endfor -%}
+        });
+
+        let resp = http_client
+            .put(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
+            .json(&update_body)
+            .send().await.expect("PUT {{ entity_plural }}/{id} failed");
+        assert!(resp.status().is_success(), "update {{ entity_snake }} failed: {}", resp.status());
+        let body: Value = resp.json().await.expect("parse update body");
+        assert_eq!(body["id"].as_i64().unwrap_or(0), id, "updated id mismatch");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn delete(#[future] base_url: String, http_client: reqwest::Client) {
+        let base_url = base_url.await;
+        let created = setup_{{ entity_snake }}(&base_url, &http_client).await;
+        let id = extract_id(&created);
+
+        let resp = http_client
+            .delete(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
+            .send().await.expect("DELETE {{ entity_plural }}/{id} failed");
+        assert!(resp.status().is_success(), "delete {{ entity_snake }} failed: {}", resp.status());
+
+        // Confirm 404 after deletion
+        let get_resp = http_client
+            .get(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
+            .send().await.expect("GET after delete failed");
+        assert_eq!(get_resp.status().as_u16(), 404, "Expected 404 after delete");
+    }
+}
+
+{% endfor %}
+
+{% endif %}{# rest in protocols #}
+
+{% if 'grpc' in protocols %}
+// ============================================================================
+// gRPC helpers & per-entity CRUD tests
+// ============================================================================
+
+use e2e::grpc_addr;
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_pascal = entity_name | pascal_case -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_plural_pascal = entity_name | plural | pascal_case -%}
+{% set entity_plural_snake = entity_name | plural | snake_case -%}
+
+async fn setup_grpc_{{ entity_snake }}(addr: &str) -> e2e::proto::{{ entity_pascal }} {
+    {% for attr_name, attr_prop in entity.attributes | items -%}
+    {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
+    let {{ attr_name | snake_case }}_dep = setup_grpc_{{ attr_prop.target | snake_case }}(addr).await;
+    {% endif -%}
+    {% endfor -%}
+    use e2e::proto::{{ entity_snake }}_service_client::{{ entity_pascal }}ServiceClient;
+    let mut client = {{ entity_pascal }}ServiceClient::connect(addr.to_string())
+        .await
+        .expect("grpc connect {{ entity_snake }}");
+    let resp = client
+        .create(tonic::Request::new(e2e::proto::Create{{ entity_pascal }}Request {
+            {% for attr_name, attr_prop in entity.attributes | items -%}
+            {% if attr_prop.type == 'relation' -%}
+                {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
+            {{ attr_name | snake_case }}: Some({{ attr_name | snake_case }}_dep.id.clone()),
+                {% endif -%}
+            {% elif attr_name == 'created_at' or attr_name == 'updated_at' or attr_name == 'last_updated' -%}
+            {# skip auto-managed fields - handled by ..Default::default() #}
+            {% elif attr_prop.enum -%}
+            {{ attr_name | snake_case }}: Some("{{ attr_prop.enum[0] }}".to_string()),
+            {% elif attr_prop.type == 'string' -%}
+                {% if attr_prop.format == 'email' -%}
+            {{ attr_name | snake_case }}: Some("grpc_{{ entity_snake }}@example.com".to_string()),
+                {% elif attr_prop.format == 'url' or attr_prop.format == 'uri' -%}
+            {{ attr_name | snake_case }}: Some("https://example.com/grpc/{{ entity_snake }}".to_string()),
+                {% elif attr_prop.format == 'date-time' or attr_prop.format == 'date' -%}
+                {# optional datetime - skip, let default handle it #}
+                {% else -%}
+            {{ attr_name | snake_case }}: Some("grpc_{{ entity_snake }}_{{ attr_name | snake_case }}".to_string()),
+                {% endif -%}
+            {% elif attr_prop.type == 'text' -%}
+            {{ attr_name | snake_case }}: Some("grpc {{ entity_snake }} {{ attr_name | snake_case }}".to_string()),
+            {% elif attr_prop.type == 'integer' -%}
+            {{ attr_name | snake_case }}: Some({{ attr_prop.default | default(1) }}),
+            {% elif attr_prop.type == 'number' -%}
+            {{ attr_name | snake_case }}: Some(1.0),
+            {% elif attr_prop.type == 'boolean' -%}
+            {{ attr_name | snake_case }}: Some({{ attr_prop.default | default(true) | lower }}),
+            {% endif -%}
+            {% endfor -%}
+            ..Default::default()
+        }))
+        .await
+        .expect("grpc create {{ entity_snake }}");
+    resp.into_inner()
+}
+
+mod grpc_{{ entity_snake }}_crud {
+    use super::*;
+    use e2e::proto::{{ entity_snake }}_service_client::{{ entity_pascal }}ServiceClient;
+    use e2e::grpc_addr;
+    use rstest::rstest;
+
+    #[rstest]
+    #[tokio::test]
+    async fn create(#[future] grpc_addr: String) {
+        let addr = grpc_addr.await;
+        let entity = setup_grpc_{{ entity_snake }}(&addr).await;
+        assert!(!entity.id.is_empty(), "Expected non-empty id after gRPC create for {{ entity_snake }}");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn list(#[future] grpc_addr: String) {
+        let addr = grpc_addr.await;
+        let _ = setup_grpc_{{ entity_snake }}(&addr).await;
+        let mut client = {{ entity_pascal }}ServiceClient::connect(addr)
+            .await.expect("connect");
+        let resp = client
+            .list(tonic::Request::new(e2e::proto::List{{ entity_plural_pascal }}Request {
+                page_size: 10,
+                page_token: String::new(),
+            }))
+            .await
+            .expect("grpc list {{ entity_plural_snake }}");
+        assert!(
+            !resp.into_inner().{{ entity_plural_snake }}.is_empty(),
+            "Expected non-empty gRPC list for {{ entity_plural_snake }}"
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn read_one(#[future] grpc_addr: String) {
+        let addr = grpc_addr.await;
+        let created = setup_grpc_{{ entity_snake }}(&addr).await;
+        let id = created.id.clone();
+        let mut client = {{ entity_pascal }}ServiceClient::connect(addr)
+            .await.expect("connect");
+        let resp = client
+            .get(tonic::Request::new(e2e::proto::Get{{ entity_pascal }}Request { id: id.clone() }))
+            .await
+            .expect("grpc get {{ entity_snake }}");
+        assert_eq!(resp.into_inner().id, id, "read_one id mismatch for {{ entity_snake }}");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn update(#[future] grpc_addr: String) {
+        let addr = grpc_addr.await;
+        let created = setup_grpc_{{ entity_snake }}(&addr).await;
+        let id = created.id.clone();
+        let mut client = {{ entity_pascal }}ServiceClient::connect(addr)
+            .await.expect("connect");
+        let resp = client
+            .update(tonic::Request::new(e2e::proto::Update{{ entity_pascal }}Request {
+                id: id.clone(),
+                {% for attr_name, attr_prop in entity.attributes | items -%}
+                {% if attr_prop.type == 'relation' -%}
+                    {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
+                {{ attr_name | snake_case }}: created.{{ attr_name | snake_case }}.clone(),
+                    {% endif -%}
+                {% elif attr_name == 'created_at' or attr_name == 'updated_at' or attr_name == 'last_updated' -%}
+                {# skip - handled by ..Default::default() #}
+                {% elif attr_prop.enum -%}
+                {{ attr_name | snake_case }}: created.{{ attr_name | snake_case }}.clone(),
+                {% elif attr_prop.type == 'string' -%}
+                    {% if attr_prop.format == 'email' -%}
+                {{ attr_name | snake_case }}: Some("updated_grpc_{{ entity_snake }}@example.com".to_string()),
+                    {% elif attr_prop.format == 'url' or attr_prop.format == 'uri' -%}
+                {{ attr_name | snake_case }}: Some("https://example.com/updated/grpc/{{ entity_snake }}".to_string()),
+                    {% elif attr_prop.format == 'date-time' or attr_prop.format == 'date' -%}
+                {# optional datetime - keep original value #}
+                {{ attr_name | snake_case }}: created.{{ attr_name | snake_case }}.clone(),
+                    {% else -%}
+                {{ attr_name | snake_case }}: Some("updated_grpc_{{ entity_snake }}_{{ attr_name | snake_case }}".to_string()),
+                    {% endif -%}
+                {% elif attr_prop.type == 'text' -%}
+                {{ attr_name | snake_case }}: Some("updated grpc {{ entity_snake }} {{ attr_name | snake_case }}".to_string()),
+                {% elif attr_prop.type == 'integer' -%}
+                {{ attr_name | snake_case }}: Some({{ attr_prop.default | default(2) }}),
+                {% elif attr_prop.type == 'number' -%}
+                {{ attr_name | snake_case }}: Some(2.0),
+                {% elif attr_prop.type == 'boolean' -%}
+                {{ attr_name | snake_case }}: created.{{ attr_name | snake_case }},
+                {% endif -%}
+                {% endfor -%}
+                ..Default::default()
+            }))
+            .await
+            .expect("grpc update {{ entity_snake }}");
+        assert_eq!(resp.into_inner().id, id, "update id mismatch for {{ entity_snake }}");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn delete(#[future] grpc_addr: String) {
+        let addr = grpc_addr.await;
+        let created = setup_grpc_{{ entity_snake }}(&addr).await;
+        let id = created.id.clone();
+        let mut client = {{ entity_pascal }}ServiceClient::connect(addr)
+            .await.expect("connect");
+        client
+            .delete(tonic::Request::new(e2e::proto::Delete{{ entity_pascal }}Request { id: id.clone() }))
+            .await
+            .expect("grpc delete {{ entity_snake }}");
+        // Verify get now returns not-found
+        let result = client
+            .get(tonic::Request::new(e2e::proto::Get{{ entity_pascal }}Request { id }))
+            .await;
+        assert!(result.is_err(), "Expected gRPC not-found after delete of {{ entity_snake }}");
+    }
+}
+
+{% endfor %}
+{% endif %}
 
 {% if frontend != 'none' %}
 // ============================================================================

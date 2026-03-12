@@ -16,8 +16,12 @@ pub struct TestEnvironment {
     _postgres: ContainerAsync<Postgres>,
     /// The App container
     _app: ContainerAsync<GenericImage>,
-    /// Base URL for the application under test
+    /// Base URL for the REST application under test
     pub base_url: String,
+{% if 'grpc' in protocols %}
+    /// gRPC endpoint address (e.g. http://host:9090)
+    pub grpc_addr: String,
+{% endif %}
 }
 
 {% if frontend != 'none' %}
@@ -100,6 +104,9 @@ impl TestEnvironment {
         println!("Starting app container...");
         let app_image = GenericImage::new("{{project_name}}", "latest")
             .with_exposed_port(8080.tcp())
+{% if 'grpc' in protocols %}
+            .with_exposed_port(9090.tcp())
+{% endif %}
             .with_env_var("DATABASE_URL", &database_url_for_app)
             .with_env_var("RUST_LOG", "debug");
         
@@ -107,8 +114,12 @@ impl TestEnvironment {
 
         let app_host = app_container.get_host().await?;
         let app_port = app_container.get_host_port_ipv4(8080).await?;
-        let base_url = format!("http://{}:{}", app_host, app_port);        
-
+        let base_url = format!("http://{}:{}", app_host, app_port);
+{% if 'grpc' in protocols %}
+        let grpc_port = app_container.get_host_port_ipv4(9090).await?;
+        let grpc_addr = format!("http://{}:{}", app_host, grpc_port);
+        println!("gRPC service available at: {}", grpc_addr);
+{% endif %}
         println!("App service available at: {}", base_url);
 
         // Wait for healthy with log streaming
@@ -118,6 +129,9 @@ impl TestEnvironment {
             _postgres: postgres_container,
             _app: app_container,
             base_url,
+{% if 'grpc' in protocols %}
+            grpc_addr,
+{% endif %}
         })
     }
 
@@ -215,8 +229,25 @@ pub async fn browser() -> TestBrowser {
 }
 {% endif %}
 
+{% if 'grpc' in protocols %}
+/// Rstest fixture for the gRPC endpoint address
+#[fixture]
+pub async fn grpc_addr(#[future] test_env: Arc<Mutex<TestEnvironment>>) -> String {
+    let env = test_env.await;
+    let guard = env.lock().await;
+    guard.grpc_addr.clone()
+}
+{% endif %}
+
 /// Rstest fixture for HTTP client (API tests)
 #[fixture]
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
+
+{% if 'grpc' in protocols %}
+/// Generated gRPC client types (compiled from proto at build time)
+pub mod proto {
+    tonic::include_proto!("{{ project_name | snake_case }}");
+}
+{% endif %}
