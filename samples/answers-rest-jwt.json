@@ -4,7 +4,7 @@
     "database": "postgres",
     "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm"],
-    "protocol": "rest",
+    "protocols": ["rest"],
     "static_includes": [],
     "entities": {
         "Profile": {

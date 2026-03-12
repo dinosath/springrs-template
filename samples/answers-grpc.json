@@ -6,7 +6,7 @@
     "db_schema": "public",
     "id_type": "integer",
     "features": ["open-telemetry", "helm"],
-    "protocol": "grpc",
+    "protocols": ["grpc"],
     "static_includes": [],
     "entities": {
         "Profile": {

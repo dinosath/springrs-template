@@ -1,0 +1,1 @@
+templates/schema/grpc/{% if 'grpc' in protocols %}build.rs.baker.j2{% endif %}

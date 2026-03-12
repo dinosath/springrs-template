@@ -2,6 +2,7 @@
 name = "{{project_name}}"
 version = "{{project_version}}"
 edition = "{{project_edition}}"
+license = "MIT"
 publish = false
 
 [profile.release]
@@ -30,19 +31,19 @@ serde = "1.0"
 serde_json = "1.0"
 serde_with = "3.16"
 #summer = "0.5"
-summer = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}
-{{ 'summer-opentelemetry = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}' if 'open-telemetry' in features }}
+summer = {git="https://github.com/dinosath/spring-rs", branch="master"}
+{{ 'summer-opentelemetry = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'open-telemetry' in features }}
 {% if database=='postgres' -%}
 #summer-sea-orm = { version = "0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
-summer-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls", version="0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
+summer-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="master", version="0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
 sea-orm = { version = "2.0.0-rc.35", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
 {% endif -%}
-{{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}' if 'rest' in protocols }}
+{{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'rest' in protocols }}
 {{ 'static-serve = "0.5"' if frontend != 'none' }}
 {% if 'grpc' in protocols -%}
-summer-grpc = {git="https://github.com/dinosath/spring-rs", branch="seaorm-rustls"}
-prost = "0.13"
-tonic = "0.12"
+summer-grpc = {git="https://github.com/dinosath/spring-rs", branch="master"}
+tonic = "0.14"
+tonic-prost = "0.14"
 prost-types = "0.13"
 {% endif %}
 tokio.workspace = true
@@ -56,5 +57,5 @@ serial_test = "3"
 
 {% if 'grpc' in protocols -%}
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
 {% endif -%}
