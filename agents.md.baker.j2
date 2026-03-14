@@ -1,0 +1,209 @@
+# {{project_name}} — Agent Guide
+
+This file is intended for AI coding agents (Copilot, Codex, Claude, etc.) working on this project.
+It provides a concise map of the codebase so an agent can orient itself quickly.
+
+---
+
+## Project overview
+
+**{{project_name}}** is a Rust backend service scaffolded from the
+[springrs-template](https://github.com/dinosath/springrs-template) baker template.
+
+| Property | Value |
+|---|---|
+| Author | {{project_author}} |
+| Version | {{project_version}} |
+| Edition | {{project_edition}} |
+| Database | {{database}} |
+| Authentication | {{authentication}} |
+| Protocols | {{protocols | join(', ')}} |
+| Features | {{features | join(', ')}} |
+{% if frontend != 'none' %}
+| Frontend | {{frontend}} |
+{% endif %}
+
+The application is built on top of the **summer** framework (a spring-rs fork) and uses:
+
+- [axum](https://github.com/tokio-rs/axum) as the HTTP layer
+{% if database == 'postgres' %}
+- [SeaORM](https://www.sea-ql.org/SeaORM/) for database access (PostgreSQL)
+{% if use_seaorm_migrations %}
+- SeaORM migrations (`migration/` crate) run automatically at startup via `SeaOrmMigrationPlugin`
+{% endif %}
+{% endif %}
+{% if 'grpc' in protocols %}
+- [tonic](https://github.com/hyperium/tonic) for gRPC (`proto/` → `src/controllers/`)
+{% endif %}
+{% if 'open-telemetry' in features %}
+- OpenTelemetry for distributed tracing and metrics
+{% endif %}
+{% if 'helm' in features %}
+- Helm chart (`helm/`) for Kubernetes deployment
+{% endif %}
+
+---
+
+## Repository layout
+
+```
+{{project_name}}/
+├── src/
+│   ├── main.rs                  # Application entry-point; plugin composition
+{% if 'rest' in protocols %}
+│   ├── controllers/             # Axum/REST CRUD handlers (one file per entity)
+{% endif %}
+{% if database == 'postgres' %}
+│   ├── models/                  # SeaORM entity definitions and request/response DTOs
+{% endif %}
+│   └── services/                # Business-logic plugins (e.g. SeaOrm migration plugin)
+{% if use_seaorm_migrations %}
+├── migration/                   # SeaORM migration crate
+{% endif %}
+{% if 'grpc' in protocols %}
+├── proto/                       # .proto files (source of truth for gRPC contracts)
+├── build.rs                     # tonic-prost-build step that compiles .proto → Rust
+{% endif %}
+├── e2e/                         # End-to-end integration tests (testcontainers)
+{% if 'helm' in features %}
+├── helm/                        # Helm chart for Kubernetes
+{% endif %}
+{% if frontend != 'none' %}
+├── frontend/                    # {{frontend}} frontend application
+{% endif %}
+├── config/
+│   └── app.toml                 # Runtime configuration (DB URL, ports, …)
+├── Cargo.toml                   # Workspace manifest
+├── Dockerfile                   # Multi-stage image (cargo-chef → builder → distroless)
+├── docker-compose.yml           # Local dev stack{% if database == 'postgres' %} + PostgreSQL{% endif %}
+
+├── mise.toml                    # Developer task runner (see "Running tasks" below)
+├── deny.toml                    # cargo-deny policy (licenses, advisories, bans)
+└── answers.json                 # baker answers used to (re-)generate this project
+```
+
+---
+
+## Running tasks
+
+All day-to-day operations are driven by **[mise](https://mise.jdx.dev/)** tasks defined in `mise.toml`.
+
+```bash
+# Install toolchain (Rust, cargo tools{% if 'grpc' in protocols %}, protoc{% endif %}{% if 'helm' in features %}, helm{% endif %})
+mise install
+
+# Build
+mise run build
+
+# Run tests (unit + integration)
+mise run test
+
+# Build & test in one shot
+mise run build-and-test
+
+# Run end-to-end tests (requires Docker)
+mise run e2e
+
+# Run the service locally
+cargo run
+```
+
+{% if frontend != 'none' %}
+### Frontend tasks
+
+```bash
+# Start frontend dev server
+mise run frontend-dev
+
+# Production build
+mise run frontend-build
+```
+
+{% endif %}
+{% if database == 'postgres' %}
+### Database tasks
+
+Start the full local stack (app + PostgreSQL) with Docker Compose:
+
+```bash
+docker compose --profile runtime up
+```
+
+{% endif %}
+### Re-generating the project
+
+The project ships with its own `answers.json` so it can be re-scaffolded at any time:
+
+```bash
+# Regenerate in-place from answers.json
+mise run generate-local
+
+# Or, regenerate after editing individual entity files under .baker/entities/
+mise run merge-entities   # merges per-entity JSON → answers.json
+mise run generate-local
+```
+
+---
+
+## Entity schema
+
+Entities are defined in `answers.json` under the `entities` key using a
+[Strapi-like schema](https://github.com/dinosath/springrs-template/blob/main/templates/strapi.schema.json).
+Each entity has:
+
+- `collectionType` / `singularName` / `pluralName`
+- `attributes` — typed fields (`string`, `integer`, `boolean`, `date`, `enumeration`, …)
+- `relations` — `oneToOne`, `oneToMany`, `manyToMany`
+
+Baker uses these to generate models, migrations, and CRUD controllers automatically.
+
+---
+
+{% if 'grpc' in protocols %}
+## gRPC
+
+Proto files live in `proto/`. The `build.rs` script compiles them during `cargo build`.
+Generated Rust stubs are placed under `src/` (or the path configured in `build.rs`).
+
+Add a new RPC:
+1. Edit (or add) a `.proto` file in `proto/`.
+2. `cargo build` regenerates the stubs.
+3. Implement the handler trait in the relevant `src/controllers/` file.
+
+---
+
+{% endif %}
+## Key conventions
+
+- **Plugin composition** — all capabilities (DB, web, gRPC, OTEL, migrations) are added as
+  plugins in `src/main.rs`. Add new cross-cutting concerns there.
+- **Per-entity files** — controllers and models follow a one-file-per-entity pattern; do not
+  merge unrelated entities into the same file.
+- **Config** — runtime config lives in `config/app.toml`; environment variables override it
+  via the summer config system.
+- **Linting / security** — `cargo deny check` enforces license and vulnerability policy
+  (`deny.toml`). Run it with `mise run audit`.
+
+---
+
+## About this template
+
+This project was generated by **[baker](https://github.com/aliev/baker)** from the
+`springrs-template`. Baker uses Jinja2 syntax inside file contents (`.baker.j2` files) and
+in directory/file names themselves (e.g. `{% if 'grpc' in protocols %}proto{% endif %}`) to
+conditionally include or exclude parts of the output tree.
+
+To verify that the upstream template still generates a correct project, the template repository
+uses `mise` tasks:
+
+```bash
+# Inside springrs-template — run all sample variants
+mise run all          # rest, rest-jwt, rest-shadcn, grpc
+
+# Or run a single variant
+mise run rest
+mise run grpc
+```
+
+Each task calls `baker` against the corresponding `samples/answers-*.json` file and then runs
+`mise run build-and-test` inside the generated output to confirm a clean compile and passing tests.
