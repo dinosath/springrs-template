@@ -1,34 +1,42 @@
 import path from "path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig, loadEnv } from "vite"
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const backendTarget = env.VITE_MOCK === 'true'
+    ? (env.VITE_MOCKSERVER_URL || 'http://localhost:1080')
+    : (env.VITE_BACKEND_URL || 'http://localhost:8080')
+
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
+      dedupe: ['react', 'react-dom', 'react-dom/client'],
     },
-  },
-  server: {
-    proxy: {
+    server: {
+      proxy: {
 {% if 'rest' in protocols -%}
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
+        '/api': {
+          target: backendTarget,
+          changeOrigin: true,
+        },
 {% if authentication != 'none' -%}
-      '/auth': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
+        '/auth': {
+          target: backendTarget,
+          changeOrigin: true,
+        },
 {% endif -%}
 {% elif 'grpc' in protocols -%}
-      '/{{ project_name | snake_case }}': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
+        '/{{ project_name | snake_case }}': {
+          target: backendTarget,
+          changeOrigin: true,
+        },
 {% endif %}
+      },
     },
-  },
+  }
 })

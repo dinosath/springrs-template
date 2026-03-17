@@ -69,6 +69,7 @@ run = "cargo chef prepare --recipe-path recipe.json"
 [tasks.docker-build]
 description = "Build Docker images"
 run = "docker build -t {{project_name}} ."
+{{ 'depends = ["frontend-build"]' if frontend != "none" }}
 
 [tasks.docker-push]
 description = "Push Docker images"
@@ -106,9 +107,9 @@ cargo update
 [tasks.build-and-test]
 description = "Build and test the project"
 run = [
+    {{ '{ task = "frontend-build" },' if frontend != "none" }}
     { task = "post-generate" },
     { task = "cargo-chef" },
-    {{ '{ task = "frontend-build" },' if frontend != "none" }}
     { tasks = ["test","audit","e2e","docker-build"{{',"helm-package"' if "helm" in features }}] },
 ]
 

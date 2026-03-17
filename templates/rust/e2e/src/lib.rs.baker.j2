@@ -22,6 +22,10 @@ pub struct TestEnvironment {
     /// gRPC endpoint address (e.g. http://host:9090)
     pub grpc_addr: String,
 {% endif %}
+{% if authentication == 'jwt' %}
+    /// Bearer token obtained by registering a test user at startup.
+    pub auth_token: String,
+{% endif %}
 }
 
 {% if frontend != 'none' %}
@@ -125,12 +129,49 @@ impl TestEnvironment {
         // Wait for healthy with log streaming
         Self::wait_for_healthy_with_logs(&base_url, app_container.id()).await?;
 
+{% if authentication == 'jwt' %}
+        // Register a reusable test user and obtain a bearer token.
+        let auth_client = reqwest::Client::new();
+        let auth_token = {
+            let resp = auth_client
+                .post(format!("{}/api/auth/register", base_url))
+                .json(&serde_json::json!({
+                    "username": "e2e_test_user",
+                    "password": "E2eTestPassword123!"
+                }))
+                .send()
+                .await?;
+            // If the user already exists, fall back to login.
+            let resp = if resp.status().is_success() {
+                resp
+            } else {
+                auth_client
+                    .post(format!("{}/api/auth/login", base_url))
+                    .json(&serde_json::json!({
+                        "username": "e2e_test_user",
+                        "password": "E2eTestPassword123!"
+                    }))
+                    .send()
+                    .await?
+            };
+            let body: serde_json::Value = resp.json().await?;
+            body["token"]
+                .as_str()
+                .ok_or("auth endpoint did not return a token field")
+                .map(str::to_string)?
+        };
+        println!("Obtained auth token for e2e test user");
+{% endif %}
+
         Ok(TestEnvironment {
             _postgres: postgres_container,
             _app: app_container,
             base_url,
 {% if 'grpc' in protocols %}
             grpc_addr,
+{% endif %}
+{% if authentication == 'jwt' %}
+            auth_token,
 {% endif %}
         })
     }
@@ -244,6 +285,37 @@ pub async fn grpc_addr(#[future] test_env: Arc<Mutex<TestEnvironment>>) -> Strin
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
+
+{% if authentication == 'jwt' %}
+/// Rstest fixture that resolves the bearer token for the shared e2e test user.
+#[fixture]
+pub async fn auth_token(#[future] test_env: Arc<Mutex<TestEnvironment>>) -> String {
+    let env = test_env.await;
+    let guard = env.lock().await;
+    guard.auth_token.clone()
+}
+
+/// Rstest fixture for an HTTP client pre-configured with the e2e bearer token.
+///
+/// Use this instead of [`http_client`] for requests to endpoints that require
+/// authentication.
+#[fixture]
+pub async fn authed_http_client(#[future] test_env: Arc<Mutex<TestEnvironment>>) -> reqwest::Client {
+    let env = test_env.await;
+    let token = env.lock().await.auth_token.clone();
+    reqwest::Client::builder()
+        .default_headers({
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {token}").parse().expect("valid bearer header"),
+            );
+            headers
+        })
+        .build()
+        .expect("failed to build authed HTTP client")
+}
+{% endif %}
 
 {% if 'grpc' in protocols %}
 /// Generated gRPC client types (compiled from proto at build time)

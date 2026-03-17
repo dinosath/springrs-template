@@ -11,6 +11,9 @@ use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, C
 use summer_sea_orm::DbConn;
 use summer::tracing::debug;
 use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, {{model}}Create,{{model}}Update,{{model}}Response};
+{% if authentication == 'jwt' -%}
+use crate::services::auth_plugin::AuthUser;
+{% endif -%}
 /**
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
 use super::{ {%- for rel in macros.get_all_relations(entity)|split(',') %}{{ rust_types.identifier(rel| trim | snake_case)  }}::{{rel | pascal_case}} as {{ rel | trim | pascal_case}}{% if not loop.last %}, {% endif -%}{% endfor -%} };
@@ -32,7 +35,7 @@ where
 }
 
 #[get("/api/{{ entity.info.pluralName | kebab_case }}")]
-pub async fn list(Component(db): Component<DbConn>) -> Result<impl IntoResponse> {
+pub async fn list(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}) -> Result<impl IntoResponse> {
     debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
     let models = Entity::find()
         .all(&db)
@@ -52,7 +55,7 @@ pub async fn list(Component(db): Component<DbConn>) -> Result<impl IntoResponse>
 }
 
 #[post("/api/{{ entity.info.pluralName | kebab_case }}")]
-pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
+pub async fn create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
     debug!("Creating new {{ entity_name | snake_case }} - Request: {:?}",create);
     let active_model = create.into_active_model();
     let model = active_model.insert(&db)
@@ -64,7 +67,7 @@ pub async fn create(Component(db): Component<DbConn>, Json(create): Json<{{model
 }
 
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
+pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
     debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
     let _ = load_item(&db, id).await?;
     let mut active_model = update.into_active_model();
@@ -78,7 +81,7 @@ pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>, Json(
 }
 
 #[delete("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Result<impl IntoResponse> {
+pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}) -> Result<impl IntoResponse> {
     debug!("Deleting {{ entity_name | snake_case }} with id: {}", id);
     let model = load_item(&db, id).await?;
     model.delete(&db)
@@ -89,7 +92,7 @@ pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Re
 }
 
 #[get("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>) -> Result<impl IntoResponse> {
+pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}) -> Result<impl IntoResponse> {
     debug!("Fetching {{ entity_name | snake_case }} with id: {}", id);
     let model = load_item(&db, id).await?;
     debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", id);

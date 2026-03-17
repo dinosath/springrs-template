@@ -1,0 +1,88 @@
+{% if authentication == 'jwt' or authentication == 'oidc' %}
+import { describe, it, expect, beforeEach } from 'vitest';
+import { authProvider, getAuthToken } from '@/lib/authProvider';
+
+describe('authProvider', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  describe('login', () => {
+    it('stores token in localStorage on success', async () => {
+      await authProvider.login({ username: 'admin', password: 'admin' });
+      expect(localStorage.getItem('token')).toBe('mock-jwt-token-for-testing');
+    });
+
+    it('stores full auth object in localStorage on success', async () => {
+      await authProvider.login({ username: 'admin', password: 'admin' });
+      const stored = JSON.parse(localStorage.getItem('auth')!);
+      expect(stored.token).toBe('mock-jwt-token-for-testing');
+    });
+
+    it('throws on failed login', async () => {
+      await expect(
+        authProvider.login({ username: '', password: '' })
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('logout', () => {
+    it('clears localStorage on logout', async () => {
+      localStorage.setItem('token', 'test-token');
+      localStorage.setItem('auth', '{}');
+      localStorage.setItem('identity', '{}');
+      await authProvider.logout(undefined);
+      expect(localStorage.getItem('token')).toBeNull();
+      expect(localStorage.getItem('auth')).toBeNull();
+      expect(localStorage.getItem('identity')).toBeNull();
+    });
+  });
+
+  describe('checkAuth', () => {
+    it('resolves when token exists', async () => {
+      localStorage.setItem('token', 'valid-token');
+      await expect(authProvider.checkAuth(undefined)).resolves.not.toThrow();
+    });
+
+    it('rejects when no token', async () => {
+      await expect(authProvider.checkAuth(undefined)).rejects.toThrow('Not authenticated');
+    });
+  });
+
+  describe('checkError', () => {
+    it('resolves for non-401/403 errors', async () => {
+      await expect(authProvider.checkError({ status: 500 })).resolves.not.toThrow();
+    });
+
+    it('rejects and clears token on 401', async () => {
+      localStorage.setItem('token', 'test-token');
+      await expect(authProvider.checkError({ status: 401 })).rejects.toThrow();
+      expect(localStorage.getItem('token')).toBeNull();
+    });
+
+    it('rejects and clears token on 403', async () => {
+      localStorage.setItem('token', 'test-token');
+      await expect(authProvider.checkError({ status: 403 })).rejects.toThrow();
+      expect(localStorage.getItem('token')).toBeNull();
+    });
+  });
+
+  describe('getPermissions', () => {
+    it('returns empty array when not authenticated', async () => {
+      const perms = await authProvider.getPermissions?.(undefined);
+      expect(perms).toEqual([]);
+    });
+  });
+
+  describe('getAuthToken', () => {
+    it('returns token from localStorage', () => {
+      localStorage.setItem('token', 'my-token');
+      expect(getAuthToken()).toBe('my-token');
+    });
+
+    it('returns null when not set', () => {
+      expect(getAuthToken()).toBeNull();
+    });
+  });
+});
+{% endif %}

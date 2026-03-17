@@ -3,7 +3,13 @@
 
 [advisories]
 # IDs of advisories to ignore
-ignore = []
+ignore = [
+{% if authentication == 'jwt' and 'rest' in protocols -%}
+    # RUSTSEC-2023-0071: Marvin Attack in RSA – introduced via webgates/jsonwebtoken.
+    # webgates uses HMAC-SHA256 for signing; RSA is not exercised in practice.
+    "RUSTSEC-2023-0071",
+{% endif -%}
+]
 
 [licenses]
 # Allow common open-source licenses

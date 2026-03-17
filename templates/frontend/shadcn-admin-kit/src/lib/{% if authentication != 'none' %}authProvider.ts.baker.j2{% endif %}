@@ -1,7 +1,7 @@
 {% if authentication == 'jwt' -%}
 import { type AuthProvider } from 'ra-core';
 
-const API_URL = '/auth';
+const API_URL = '/api/auth';
 
 interface LoginParams {
     email?: string;
@@ -10,9 +10,7 @@ interface LoginParams {
 }
 
 interface AuthResponse {
-    access_token: string;
-    token_type: string;
-    expires_in: number;
+    token: string;
 }
 
 interface UserIdentity {
@@ -46,7 +44,7 @@ export const authProvider: AuthProvider = {
 
         const auth: AuthResponse = await response.json();
         localStorage.setItem('auth', JSON.stringify(auth));
-        localStorage.setItem('token', auth.access_token);
+        localStorage.setItem('token', auth.token);
         return auth;
     },
 

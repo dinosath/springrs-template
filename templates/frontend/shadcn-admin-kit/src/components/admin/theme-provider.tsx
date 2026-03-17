@@ -1,5 +1,4 @@
-import { createContext, useContext, useEffect } from "react";
-import { useStore } from "ra-core";
+import { createContext, useContext, useEffect, useState } from "react";
 
 type Theme = "dark" | "light" | "system";
 
@@ -27,7 +26,14 @@ export function ThemeProvider({
   storageKey = "theme",
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useStore<Theme>(storageKey, defaultTheme);
+  const [theme, setThemeState] = useState<Theme>(
+    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
+  );
+
+  const setTheme = (newTheme: Theme) => {
+    localStorage.setItem(storageKey, newTheme);
+    setThemeState(newTheme);
+  };
 
   useEffect(() => {
     const root = window.document.documentElement;

@@ -99,7 +99,7 @@ async fn init_test_server() -> &'static TestServer {
 }
 
 {% if authentication == 'jwt' -%}
-/// Get or create an authentication token
+/// Get or create an authentication token.
 async fn get_auth_token(server: &TestServer) -> &'static str {
     AUTH_TOKEN
         .get_or_init(|| async {
@@ -107,37 +107,146 @@ async fn get_auth_token(server: &TestServer) -> &'static str {
                 .post("/api/auth/register")
                 .json(&json!({
                     "username": "testuser",
-                    "email": "test@example.com",
                     "password": "TestPassword123!"
                 }))
                 .await;
 
-            if !response.status_code().is_success() {
-                // Try login if register fails
-                let login_response = server
+            if response.status_code().is_success() {
+                response
+                    .json::<serde_json::Value>()["token"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            } else {
+                // User already exists – fall back to login.
+                server
                     .post("/api/auth/login")
                     .json(&json!({
                         "username": "testuser",
                         "password": "TestPassword123!"
                     }))
-                    .await;
-
-                login_response
-                    .json::<serde_json::Value>()
-                    .token
+                    .await
+                    .json::<serde_json::Value>()["token"]
                     .as_str()
-                    .unwrap()
-                    .to_string()
-            } else {
-                response
-                    .json::<serde_json::Value>()
-                    .token
-                    .as_str()
-                    .unwrap()
+                    .unwrap_or_default()
                     .to_string()
             }
         })
         .await
+}
+
+/// Tests for the authentication endpoints.
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_register_returns_token() {
+        let server = init_test_server().await;
+        let response = server
+            .post("/api/auth/register")
+            .json(&json!({"username": "auth_reg_user", "password": "RegPass123!"}))
+            .await;
+        assert!(
+            response.status_code().is_success(),
+            "register failed: {} – {:?}",
+            response.status_code(),
+            response.text()
+        );
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["token"].is_string(),
+            "expected 'token' string in register response, got: {:?}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_returns_token() {
+        let server = init_test_server().await;
+        // Ensure the user exists.
+        let _ = server
+            .post("/api/auth/register")
+            .json(&json!({"username": "auth_login_user", "password": "LoginPass123!"}))
+            .await;
+        let response = server
+            .post("/api/auth/login")
+            .json(&json!({"username": "auth_login_user", "password": "LoginPass123!"}))
+            .await;
+        assert!(
+            response.status_code().is_success(),
+            "login failed: {} – {:?}",
+            response.status_code(),
+            response.text()
+        );
+        let body: serde_json::Value = response.json();
+        assert!(body["token"].is_string(), "expected 'token' in login response, got: {:?}", body);
+    }
+
+    #[tokio::test]
+    async fn test_login_wrong_password_rejected() {
+        let server = init_test_server().await;
+        let _ = server
+            .post("/api/auth/register")
+            .json(&json!({"username": "auth_bad_pw_user", "password": "GoodPass123!"}))
+            .await;
+        let response = server
+            .post("/api/auth/login")
+            .json(&json!({"username": "auth_bad_pw_user", "password": "WrongPassword!"}))
+            .await;
+        assert_eq!(
+            response.status_code().as_u16(), 401,
+            "expected 401 for wrong password, got: {}",
+            response.status_code()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_me_returns_user_info() {
+        let server = init_test_server().await;
+        let token = get_auth_token(server).await;
+        let response = server
+            .get("/api/auth/me")
+            .add_header(
+                "Authorization".parse().unwrap(),
+                format!("Bearer {token}").parse().unwrap(),
+            )
+            .await;
+        assert!(
+            response.status_code().is_success(),
+            "/api/auth/me failed: {} – {:?}",
+            response.status_code(),
+            response.text()
+        );
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["user_id"].is_string(),
+            "expected 'user_id' in /api/auth/me response, got: {:?}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn test_me_without_token_rejected() {
+        let server = init_test_server().await;
+        let response = server.get("/api/auth/me").await;
+        assert_eq!(
+            response.status_code().as_u16(), 401,
+            "expected 401 without auth token, got: {}",
+            response.status_code()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_logout_succeeds() {
+        let server = init_test_server().await;
+        let response = server.post("/api/auth/logout").await;
+        assert!(
+            response.status_code().is_success(),
+            "logout failed: {}",
+            response.status_code()
+        );
+    }
 }
 {% elif authentication == 'keycloak' -%}
 /// Get or create an authentication token

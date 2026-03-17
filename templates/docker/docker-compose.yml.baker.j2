@@ -32,3 +32,16 @@ services:
     ports:
       - 5432:5432
   {% endif -%}
+{% if frontend != 'none' %}
+  mockserver:
+    image: mockserver/mockserver:latest
+    ports:
+      - 1080:1080
+    environment:
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/expectations.json
+      MOCKSERVER_WATCH_INITIALIZATION_JSON: "true"
+    volumes:
+      - ./mockserver:/config
+    profiles:
+      - mock
+{% endif %}
