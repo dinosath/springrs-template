@@ -23,7 +23,7 @@ tokio = { version = "1", features = ["full"] }
 
 [dependencies]
 automod.workspace = true
-{{ 'axum = "0.8"' if frontend != 'none' }}
+{{ 'axum = "0.8"' if frontend != 'none' or (authentication == 'jwt' and 'rest' in protocols) }}
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 {{ 'migration = { path = "migration" }' if use_seaorm_migrations }}
@@ -40,6 +40,11 @@ sea-orm = { version = "2.0.0-rc.35", features = ["sqlx-postgres","runtime-tokio-
 {% endif -%}
 {{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'rest' in protocols }}
 {{ 'static-serve = "0.5"' if frontend != 'none' }}
+{% if authentication == 'jwt' and 'rest' in protocols -%}
+webgates = { git = "https://github.com/emirror-de/webgates", branch = "nightly", features = ["server", "insecure-fast-hash"] }
+webgates-axum = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
+webgates-repositories = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
+{% endif -%}
 {% if 'grpc' in protocols -%}
 summer-grpc = {git="https://github.com/dinosath/spring-rs", branch="master"}
 tonic = "0.14"

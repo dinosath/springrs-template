@@ -5,6 +5,9 @@ use mimalloc::MiMalloc;
 {{ 'use summer_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
 {{ 'use summer_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
 {{ 'use services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if use_seaorm_migrations }}
+{% if authentication == 'jwt' and 'rest' in protocols -%}
+use services::auth_plugin::AuthPlugin;
+{% endif -%}
 {% if 'rest' in protocols -%}
 mod controllers {
     automod::dir!("src/controllers");
@@ -36,6 +39,7 @@ async fn main() {
             KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
         ])
         {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' }}
+        {{ '.add_plugin(AuthPlugin)' if authentication == 'jwt' and 'rest' in protocols }}
         {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
         {{ '.add_plugin(WebPlugin)' if 'rest' in protocols }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}

@@ -1,6 +1,6 @@
 {
     "project_name": "sample_app",
-    "authentication": "none",
+    "authentication": "jwt",
     "database": "postgres",
     "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm"],
