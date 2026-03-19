@@ -1,0 +1,125 @@
+{% import "macros.jinja" as macros -%}
+import { describe, it, expect } from 'vitest';
+
+// Generate a unique password for this test run so that no hardcoded credentials
+// appear in the test binary or its output.
+const TEST_PASSWORD = `Tp${Date.now()}A!`;
+
+// Use relative URLs so MSW resolves them against the jsdom origin (http://localhost)
+const BASE = '';
+
+describe('API contract via MSW (integration)', () => {
+  const authHeaders = () => ({
+    Authorization: 'Bearer mock-jwt-token-for-testing',
+    'Content-Type': 'application/json',
+  });
+
+{% if authentication == 'jwt' or authentication == 'oidc' %}
+  // ---- Auth ----
+  describe('/api/auth/login', () => {
+    it('returns a token', async () => {
+      const res = await fetch(`${BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin' }),
+      });
+      expect(res.ok).toBe(true);
+      const body = await res.json();
+      expect(body.token).toBe('mock-jwt-token-for-testing');
+    });
+  });
+
+  describe('/api/auth/register', () => {
+    it('returns 201 with a token', async () => {
+      const res = await fetch(`${BASE}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'newuser', password: TEST_PASSWORD }),
+      });
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.token).toBeTruthy();
+    });
+  });
+
+  describe('/api/auth/me', () => {
+    it('returns user info', async () => {
+      const res = await fetch(`${BASE}/api/auth/me`, { headers: authHeaders() });
+      expect(res.ok).toBe(true);
+      const body = await res.json();
+      expect(body.user_id).toBeTruthy();
+    });
+  });
+{% endif %}
+
+  // ---- Resources ----
+  const resources = [
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_plural = entity_name | plural | snake_case -%}
+{% set first_string_field = entity.attributes | items | selectattr("1.type", "equalto", "string") | list | first -%}
+{% set first_field_name = first_string_field[0] | snake_case if first_string_field else "id" -%}
+    { name: '{{ entity_plural }}', field: '{{ first_field_name }}' },
+{% endfor %}
+  ];
+
+  for (const { name, field } of resources) {
+    describe(`/api/${name}`, () => {
+      it('GET list returns array with Content-Range header', async () => {
+        const res = await fetch(`${BASE}/api/${name}?_start=0&_end=10`, {
+          headers: authHeaders(),
+        });
+        expect(res.ok).toBe(true);
+        const body = await res.json();
+        expect(Array.isArray(body)).toBe(true);
+        const hasRange =
+          res.headers.has('Content-Range') || res.headers.has('x-total-count');
+        expect(hasRange).toBe(true);
+      });
+
+      it('GET single item returns object with id', async () => {
+        const res = await fetch(`${BASE}/api/${name}/1`, { headers: authHeaders() });
+        expect(res.ok).toBe(true);
+        const body = await res.json();
+        expect(body.id).toBe(1);
+      });
+
+      it('GET non-existent item returns 404', async () => {
+        const res = await fetch(`${BASE}/api/${name}/999999`, { headers: authHeaders() });
+        expect(res.status).toBe(404);
+      });
+
+      it(`POST creates item with ${field}`, async () => {
+        const res = await fetch(`${BASE}/api/${name}`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ [field]: `test_${name}` }),
+        });
+        expect(res.status).toBe(201);
+        const body = await res.json();
+        expect(body.id).toBeTruthy();
+        expect(body[field]).toBe(`test_${name}`);
+      });
+
+      it('PUT updates item', async () => {
+        const res = await fetch(`${BASE}/api/${name}/1`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({ [field]: `updated_${name}` }),
+        });
+        expect(res.ok).toBe(true);
+        const body = await res.json();
+        expect(body[field]).toBe(`updated_${name}`);
+      });
+
+      it('DELETE returns id', async () => {
+        const res = await fetch(`${BASE}/api/${name}/1`, {
+          method: 'DELETE',
+          headers: authHeaders(),
+        });
+        expect(res.ok).toBe(true);
+        const body = await res.json();
+        expect(body.id).toBe(1);
+      });
+    });
+  }
+});

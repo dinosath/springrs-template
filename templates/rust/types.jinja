@@ -1,0 +1,270 @@
+{% import "macros.jinja" as macros %}
+
+{% macro seaorm_derive(name,property) -%}
+{% if property and property.unique -%}
+    #[sea_orm(unique)]
+{% endif -%}
+{% if property.type=='relation' -%}
+{% if macros.relation_is_many_to_many(property)=='true' -%}
+#[sea_orm(has_many, via = "{{ macros.m2m_junction_table(entity_name,property) | snake_case }}" )]
+{% elif macros.relation_is_one_to_many(property)=='true' -%}
+#[sea_orm(has_many)]
+{# manyToOne or oneToOne = this side has FK column #}
+{% elif macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+{% filter trim %}
+    #[sea_orm(unique)]
+    pub {{name | snake_case}}_id: {% if not property.required %}Option<{% endif %}{{ rust_id_type(id_type) }}{% if not property.required %}>{% endif %},
+    #[sea_orm(belongs_to, from = "{{name | snake_case}}_id", to = "id")]
+{% endfilter %}
+{% endif %}
+{% endif %}
+{% endmacro -%}
+
+{%- macro get_rust_primitive(name, property) -%}
+{% filter trim %}
+{%- if property.type -%}
+    {%- if property.type == 'enumeration' -%}
+        {{ name | pascal_case }}
+    {%- elif property.type == 'relation' -%}
+        {{ property.target | pascal_case }}
+    {%- elif property.type == 'datetime' or property.type == 'timestamp' -%}
+        DateTime
+    {%- elif property.type == 'date' -%}
+        Date
+    {%- elif property.type == 'time' -%}
+        TimeTime
+    {%- elif property.type == 'string' -%}
+        {%- if property.format == 'uuid' -%}
+            Uuid
+        {%- elif property.format == 'date-time' -%}
+            DateTime
+        {%- elif property.format == 'date' -%}
+            Date
+        {%- elif property.format == 'time' -%}
+            TimeTime
+        {%- elif property.format in ['email', 'url'] -%}
+            String
+        {%- else -%}
+            String
+        {%- endif -%}
+    {%- elif property.type == 'boolean' -%}
+        bool
+    {%- elif property.type == 'integer' -%}
+        {%- if property.minimum and property.minimum >= 0 -%}
+            {%- if property.maximum and property.maximum <= 32767 -%}
+                i16
+            {%- elif property.maximum and property.maximum <= 2147483647 -%}
+                i32
+            {%- elif property.maximum and property.maximum <= 9223372036854775807 -%}
+                i64
+            {%- else -%}
+                i32
+            {%- endif -%}
+        {%- else -%}
+            {%- if property.maximum and property.maximum <= 32767 -%}
+                i16
+            {%- elif property.maximum and property.maximum <= 2147483647 -%}
+                i32
+            {%- else -%}
+                i32
+            {%- endif -%}
+        {%- endif -%}
+    {%- elif property.type == 'number' -%}
+        {%- set min = property.minimum if property.minimum is defined else property.exclusiveMinimum if property.exclusiveMinimum is defined else None -%}
+        {%- set max = property.maximum if property.maximum is defined else property.exclusiveMaximum if property.exclusiveMaximum is defined else None -%}
+        {%- if min is not none and min >= -3.40282347 and max is not none and max <= 3.40282347 -%}
+            f32
+        {%- else -%}
+            f64
+        {%- endif -%}
+    {%- else -%}
+        String
+    {%- endif -%}
+{%- endif -%}
+{% endfilter %}
+{%- endmacro -%}
+
+{%- macro get_rust_type(name, property) -%}
+{% filter trim %}
+    {%- set type = get_rust_primitive(name, property) -%}
+    {%- if property.type == 'relation' -%}
+        {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
+            {% set type = 'Vec<' ~ type ~ '>' %}
+        {%- elif macros.relation_is_one_to_one(property)=='true' or macros.relation_is_many_to_one(property)=='true' -%}
+            {% set type = 'Box<' ~ type ~ '>' %}
+        {%- endif -%}
+    {%- endif -%}
+    {%- if property.required -%}
+        {{ type }}
+    {%- else -%}
+        Option<{{ type }}>
+    {%- endif -%}
+{% endfilter %}
+{%- endmacro -%}
+
+{%- macro get_type_with_option(name, property, required_fields) -%}
+{% set required = required_fields and name and name in required_fields -%}
+{% if not required -%}Option<{% endif -%}
+{{ get_rust_type(name,property) }}
+{%- if not required -%}>{% endif -%}
+{%- endmacro -%}
+
+{%- macro enum_imports(entity) -%}
+{%- for name,property in entity.attributes | items -%}
+    {%- if property['$ref'] and not property['x-relationship'] -%}
+        {{ "use crate::models::enums::" ~ identifier(name) ~ "::{" ~ identifier(name) ~ "};" }}
+    {%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}
+
+{%- macro seaorm_prelude_imports(entity) -%}
+{%- set possible_imports = ['TimeDate','TimeTime','DateTime'] -%}
+{%- set imports = entity.attributes | items | map(attribute='type') | select("in", possible_imports) -%}
+{{ "use sea_orm::prelude::{DateTime, " ~ use_imports | join(",") ~ "};"}}
+{%- endmacro -%}
+
+
+{#-
+    Macro: rust_var(name)
+
+    Purpose:
+        Transforms an arbitrary string into a valid Rust variable name.
+
+    Rules applied:
+        1. Converts the string to lowercase.
+        2. Replaces spaces and most punctuation with underscores ("_").
+        3. Collapses consecutive underscores into a single underscore.
+        4. Trims leading and trailing underscores.
+        5. If the result is empty, it becomes "_".
+        6. If the name starts with a digit, prefixes an underscore ("_").
+        7. If the name is a reserved Rust keyword, prefixes an underscore ("_").
+
+    Rust keywords handled:
+        as, break, const, continue, crate, else, enum, extern, false, fn, for, if,
+        impl, in, let, loop, match, mod, move, mut, pub, ref, return, self, Self,
+        static, struct, super, trait, true, type, unsafe, use, where, while,
+        async, await, dyn
+
+    Examples:
+        {{ rust_var("9:16") }}        → "_9_16"
+        {{ rust_var("fn") }}          → "_fn"
+        {{ rust_var("let") }}         → "_let"
+        {{ rust_var("Hello.World") }} → "hello_world"
+        {{ rust_var("Rust@2025!") }}  → "rust_2025_"
+-#}
+{% macro rust_var(name,enum=false) -%}
+    {%- set var = name|string-%}
+
+    {# Replace common non-identifier chars with "_" #}
+    {%- set var = var
+        | replace(" ", "_")
+        | replace("-", "_")
+        | replace(":", "_")
+        | replace("/", "_")
+        | replace("\\", "_")
+        | replace(".", "_")
+        | replace(",", "_")
+        | replace(";", "_")
+        | replace("+", "_")
+        | replace("*", "_")
+        | replace("@", "_")
+        | replace("#", "_")
+        | replace("$", "_")
+        | replace("%", "_")
+        | replace("^", "_")
+        | replace("&", "_")
+        | replace("(", "_")
+        | replace(")", "_")
+        | replace("[", "_")
+        | replace("]", "_")
+        | replace("{", "_")
+        | replace("}", "_")
+        | replace("|", "_")
+        | replace("?", "_")
+        | replace("!", "_")
+        | replace("'", "_")
+        | replace('"', "_")
+        | replace("<", "_")
+        | replace(">", "_")
+        | replace("~", "_")
+        | replace("`", "_")
+    -%}
+
+    {%- if enum -%}
+        {%- set var = var | pascal_case -%}
+    {%- else -%}
+        {%- set var = var | snake_case -%}
+    {%- endif -%}
+
+    {# Collapse multiple underscores #}
+    {%- for _ in range(6) -%}
+        {%- set var = var | replace("__", "_") -%}
+    {%- endfor -%}
+
+    {# Trim leading/trailing "_" #}
+    {%- set var = var | trim("_") -%}
+
+    {# Fallback if empty #}
+    {%- if var == "" -%}
+        {%- set var = "_" -%}
+    {%- endif -%}
+
+    {# If first char is a digit, prefix "_" #}
+    {%- if var and (var[0] in "0123456789") -%}
+        {%- set var = "_" ~ var -%}
+    {%- endif -%}
+
+    {# Reserved Rust keywords #}
+    {%- set keywords = [
+        "as","break","const","continue","crate","else","enum","extern","false","fn",
+        "for","if","impl","in","let","loop","match","mod","move","mut","pub","ref",
+        "return","self","self","static","struct","super","trait","true","type",
+        "unsafe","use","where","while","async","await","dyn"
+    ] -%}
+
+    {%- if var in keywords -%}
+        {%- set var = "r#" ~ var -%}
+    {%- endif -%}
+
+    {{- var -}}
+{%- endmacro %}
+
+{% macro from_model_value(name,property) -%}
+{%- filter trim -%}
+    {%- if property.required and macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}
+    vec![].into()
+    {%- elif property.required and macros.is_relation(property)=='true' -%}
+    Box::new({{ property.target | pascal_case }}::default())
+    {%- elif macros.is_relation(property)=='true' and not property.required -%}
+    None
+    {%- else -%}
+        {{ 'model.'~ rust_var(name,false) }}
+    {%- endif -%}
+{%- endfilter -%}
+{%- endmacro %}
+
+{% macro identifier(name) %}
+{%- filter trim -%}
+{{rust_var(name | snake_case,false)}}
+{%- endfilter -%}
+{% endmacro -%}
+
+{% macro rust_id_type(id_type) -%}
+{%- filter trim -%}
+{% if id_type == 'uuid' -%}
+Uuid
+{% elif id_type == 'big_integer' -%}
+i64
+{% else -%}
+i32
+{% endif -%}
+{%- endfilter -%}
+{%- endmacro %}
+
+{% macro pk_sql_type(id_type) -%}
+{% if id_type == 'uuid' -%}UUID{% elif id_type == 'big_integer' -%}BIGINT{% else -%}INTEGER{% endif -%}
+{%- endmacro %}
+
+{% macro pk_column_definition(id_type) -%}
+{% if id_type == 'uuid' -%}id UUID PRIMARY KEY DEFAULT gen_random_uuid(){% elif id_type == 'big_integer' -%}id BIGSERIAL PRIMARY KEY{% else -%}id SERIAL PRIMARY KEY{% endif -%}
+{%- endmacro %}

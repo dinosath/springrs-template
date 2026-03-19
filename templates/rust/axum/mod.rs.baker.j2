@@ -1,0 +1,17 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types %}
+
+{% for entity_name,entity in entities | items | selectattr("1.attributes")-%}
+pub mod {{ rust_types.identifier(entity_name) }};
+{% endfor -%}
+
+use axum::Router;
+use crate::app_state::AppState;
+
+/// Returns a Router with all entity controllers merged.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        {% for entity_name,entity in entities | items | selectattr("1.attributes")-%}
+        .merge({{rust_types.identifier(entity_name)}}::routes())
+        {% endfor %}
+}

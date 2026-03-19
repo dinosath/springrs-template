@@ -1,0 +1,47 @@
+version: "3"
+
+services:
+  {{project_name}}:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8080:8080
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432
+    depends_on:
+      - postgres
+    profiles:
+      - build
+  {{project_name}}_runtime:
+    image: {{project_name}}:latest
+    ports:
+      - 8080:8080
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432
+    depends_on:
+      - postgres
+    profiles:
+      - runtime
+
+  {% if database=='postgres' -%}
+  postgres:
+    image: postgres:alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - 5432:5432
+  {% endif -%}
+{% if frontend != 'none' %}
+  mockserver:
+    image: mockserver/mockserver:latest
+    ports:
+      - 1080:1080
+    environment:
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/expectations.json
+      MOCKSERVER_WATCH_INITIALIZATION_JSON: "true"
+    volumes:
+      - ./mockserver:/config
+    profiles:
+      - mock
+{% endif %}

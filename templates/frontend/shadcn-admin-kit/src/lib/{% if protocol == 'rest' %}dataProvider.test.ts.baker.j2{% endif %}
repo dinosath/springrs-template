@@ -1,0 +1,71 @@
+{% if protocol == 'rest' -%}
+import { describe, it, expect } from 'vitest';
+import { dataProvider } from './dataProvider';
+
+describe('dataProvider', () => {
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_plural = entity_name | plural | snake_case -%}
+  describe('{{ entity_plural }}', () => {
+    it('should fetch list', async () => {
+      const result = await dataProvider.getList('{{ entity_plural }}', {
+        pagination: { page: 1, perPage: 10 },
+        sort: { field: 'id', order: 'ASC' },
+        filter: {},
+      });
+
+      expect(result.data).toBeDefined();
+      expect(Array.isArray(result.data)).toBe(true);
+    });
+
+    it('should fetch one item', async () => {
+      const result = await dataProvider.getOne('{{ entity_plural }}', { id: 1 });
+
+      expect(result.data).toBeDefined();
+      expect(result.data.id).toBe(1);
+    });
+
+    it('should create item', async () => {
+      const result = await dataProvider.create('{{ entity_plural }}', {
+        data: {
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'string' -%}
+          {{ name | snake_case }}: 'Test Value',
+{% endif -%}
+{% endfor -%}
+        },
+      });
+
+      expect(result.data).toBeDefined();
+      expect(result.data.id).toBeDefined();
+    });
+
+    it('should update item', async () => {
+      const result = await dataProvider.update('{{ entity_plural }}', {
+        id: 1,
+        data: {
+          id: 1,
+{% for name, property in entity.attributes | items -%}
+{% if property.type == 'string' -%}
+          {{ name | snake_case }}: 'Updated Value',
+{% endif -%}
+{% endfor -%}
+        },
+        previousData: { id: 1 },
+      });
+
+      expect(result.data).toBeDefined();
+      expect(result.data.id).toBe(1);
+    });
+
+    it('should delete item', async () => {
+      const result = await dataProvider.delete('{{ entity_plural }}', {
+        id: 1,
+        previousData: { id: 1 },
+      });
+
+      expect(result.data).toBeDefined();
+    });
+  });
+{% endfor -%}
+});
+{% endif -%}

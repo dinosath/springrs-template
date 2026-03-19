@@ -1,0 +1,5 @@
+export { Dashboard } from './Dashboard'
+export { LoginPage } from './Login'
+{% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
+export { {{ entity_name | pascal_case }}List, {{ entity_name | pascal_case }}Create, {{ entity_name | pascal_case }}Edit } from './{{ entity_name | snake_case }}'
+{% endfor %}

@@ -1,0 +1,84 @@
+name: Release
+permissions:
+  "contents": "write"
+  "packages": "write"
+
+on:
+  pull_request:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+
+jobs:
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Tag and push Docker image with release version
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          SOURCE_IMAGE="ghcr.io/${{ github.repository_owner }}/erp:${{ github.sha }}"
+          TARGET_IMAGE="ghcr.io/${{ github.repository_owner }}/erp:$VERSION"
+          LATEST_IMAGE="ghcr.io/${{ github.repository_owner }}/erp:latest"
+          
+          docker pull "$SOURCE_IMAGE"
+          docker tag "$SOURCE_IMAGE" "$TARGET_IMAGE"
+          docker tag "$SOURCE_IMAGE" "$LATEST_IMAGE"
+          docker push "$TARGET_IMAGE"
+          docker push "$LATEST_IMAGE"
+      
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+      
+      - name: Update Helm chart version
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          sed -i "s/^version:.*/version: $VERSION/" helm/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm/Chart.yaml
+      
+      - name: Package Helm chart
+        run: |
+          helm package helm/ --destination .
+          echo "CHART_PACKAGE=$(ls erp-*.tgz)" >> $GITHUB_ENV
+      
+      - uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            target/release/erp
+            erp-*.tgz
+          body: |
+            ## Container Image
+            ```
+            ghcr.io/${{ github.repository_owner }}/erp:${{ steps.version.outputs.version }}
+            ```
+            
+            ## Helm Chart
+            ```bash
+            helm install erp ./erp-${{ steps.version.outputs.version }}.tgz
+            ```
+            
+            Or use the container image directly:
+            ```bash
+            docker pull ghcr.io/${{ github.repository_owner }}/erp:${{ steps.version.outputs.version }}
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

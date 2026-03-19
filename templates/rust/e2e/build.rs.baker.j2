@@ -1,0 +1,14 @@
+{% if 'grpc' in protocols %}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tonic_build::configure()
+        .build_server(false)
+        .build_client(true)
+        .compile_protos(
+            &["../proto/{{ project_name | snake_case }}.proto"],
+            &["../proto"],
+        )?;
+    Ok(())
+}
+{% else %}
+fn main() {}
+{% endif %}

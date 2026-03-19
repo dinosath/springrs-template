@@ -1,0 +1,7 @@
+{% import "macros.jinja" as macros -%}
+//! E2E Integration Tests
+//! 
+//! All entity tests are in this single file with modules per entity.
+//! The test server and containers are initialized once and shared across all tests.
+
+{% include "rust/unified_e2e_tests.rs.baker.j2" %}
