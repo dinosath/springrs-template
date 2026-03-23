@@ -1,5 +1,11 @@
-import { useListContext, useTranslate } from "ra-core";
-import { ChangeEvent, FormEvent, ReactElement, useState } from "react";
+import {
+  extractValidSavedQueries,
+  useListContext,
+  useSavedQueries,
+  useTranslate,
+} from "ra-core";
+import type { ChangeEvent, FormEvent, ReactElement } from "react";
+import { useState } from "react";
 import isEqual from "lodash/isEqual";
 
 import { Button } from "@/components/ui/button";
@@ -13,11 +19,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  extractValidSavedQueries,
-  useSavedQueries,
-} from "@/hooks/saved-queries";
 
+/**
+ * Dialog for saving the current list view query (filters, sort, pagination) as a named saved query.
+ *
+ * Used by FilterButton in the List view.
+ *
+ * @internal
+ */
 export const AddSavedQueryDialog = ({
   open,
   onClose,
@@ -98,6 +107,11 @@ export interface AddSavedQueryDialogProps {
   onClose: () => void;
 }
 
+/**
+ * Dialog for removing a saved query from the user's list.
+ *
+ * @internal
+ */
 export const RemoveSavedQueryDialog = ({
   open,
   onClose,

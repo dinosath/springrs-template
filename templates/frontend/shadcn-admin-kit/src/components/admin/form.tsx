@@ -1,18 +1,14 @@
 import * as React from "react";
+import type { MouseEventHandler } from "react";
+import { createContext, useCallback, useContext, useMemo } from "react";
+import type {
+  CreateParams,
+  RaRecord,
+  TransformData,
+  UpdateParams,
+} from "ra-core";
 import {
-  createContext,
-  type MouseEventHandler,
-  useCallback,
-  useContext,
-  useMemo,
-} from "react";
-import {
-  type CreateParams,
-  type RaRecord,
   setSubmissionErrors,
-  type TransformData,
-  type UpdateParams,
-  useRecordFromLocation,
   useSaveContext,
   useTranslate,
   ValidationError,
@@ -150,6 +146,25 @@ const FormError = ({ className, ...props }: React.ComponentProps<"p">) => {
   );
 };
 
+/**
+ * A button that saves form data with loading state and validation.
+ *
+ * Automatically handles form submission, validation, and loading states. Shows a spinner during
+ * save operations and can be disabled when the form is pristine or invalid.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/savebutton/ SaveButton documentation}
+ *
+ * @example
+ * import { SimpleForm, SaveButton } from '@/components/admin';
+ *
+ * const PostEdit = () => (
+ *   <Edit>
+ *     <SimpleForm toolbar={<SaveButton />}>
+ *       // form inputs here
+ *     </SimpleForm>
+ *   </Edit>
+ * )
+ */
 const SaveButton = <RecordType extends RaRecord = RaRecord>(
   props: SaveButtonProps<RecordType>,
 ) => {
@@ -163,27 +178,13 @@ const SaveButton = <RecordType extends RaRecord = RaRecord>(
     type = "submit",
     transform,
     variant = "default",
-    alwaysEnable = false,
     ...rest
   } = props;
   const translate = useTranslate();
   const form = useFormContext();
   const saveContext = useSaveContext();
-  const { dirtyFields, isValidating, isSubmitting } = useFormState();
-  // useFormState().isDirty might differ from useFormState().dirtyFields (https://github.com/react-hook-form/react-hook-form/issues/4740)
-  const isDirty = Object.keys(dirtyFields).length > 0;
-  // Use form isDirty, isValidating and form context saving to enable or disable the save button
-  // if alwaysEnable is undefined and the form wasn't prefilled
-  const recordFromLocation = useRecordFromLocation();
-  const disabled = valueOrDefault(
-    alwaysEnable === false || alwaysEnable === undefined
-      ? undefined
-      : !alwaysEnable,
-    disabledProp ||
-      (!isDirty && recordFromLocation == null) ||
-      isValidating ||
-      isSubmitting,
-  );
+  const { isValidating, isSubmitting } = useFormState();
+  const disabled = disabledProp || isValidating || isSubmitting;
 
   warning(
     type === "submit" &&
@@ -274,14 +275,7 @@ interface Props<
 }
 
 export type SaveButtonProps<RecordType extends RaRecord = RaRecord> =
-  Props<RecordType> &
-    React.ComponentProps<"button"> & {
-      alwaysEnable?: boolean;
-    };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const valueOrDefault = (value: any, defaultValue: any) =>
-  typeof value === "undefined" ? defaultValue : value;
+  Props<RecordType> & React.ComponentProps<"button">;
 
 export {
   // eslint-disable-next-line react-refresh/only-export-components

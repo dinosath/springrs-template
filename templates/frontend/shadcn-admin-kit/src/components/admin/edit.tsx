@@ -1,6 +1,6 @@
+import type { EditBaseProps } from "ra-core";
 import {
   EditBase,
-  EditBaseProps,
   Translate,
   useCreatePath,
   useEditContext,
@@ -10,7 +10,7 @@ import {
   useResourceContext,
   useResourceDefinition,
 } from "ra-core";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import {
   Breadcrumb,
@@ -23,28 +23,65 @@ import { DeleteButton } from "./delete-button";
 
 export interface EditProps extends EditViewProps, EditBaseProps {}
 
+/**
+ * A complete edit page with breadcrumb, title, and default actions.
+ *
+ * Combines data fetching, form context, and UI layout for editing records. Renders breadcrumb,
+ * page title, Show and Delete buttons, and wraps your form components.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/edit/ Edit documentation}
+ *
+ * @example
+ * import { Edit, SimpleForm, BooleanInput, TextInput } from "@/components/admin";
+ * import { required } from 'ra-core';
+ *
+ * export const CustomerEdit = () => (
+ *   <Edit>
+ *     <SimpleForm>
+ *       <TextInput source="first_name" validate={required()} />
+ *       <TextInput source="last_name" validate={required()} />
+ *       <TextInput source="email" validate={required()} />
+ *       <BooleanInput source="has_ordered" />
+ *       <TextInput multiline source="notes" />
+ *     </SimpleForm>
+ *   </Edit>
+ * );
+ */
 export const Edit = ({
-  title,
-  children,
   actions,
+  children,
   className,
+  disableBreadcrumb,
+  title,
   ...rest
 }: EditProps) => (
   <EditBase {...rest}>
-    <EditView title={title} actions={actions} className={className}>
+    <EditView
+      actions={actions}
+      className={className}
+      disableBreadcrumb={disableBreadcrumb}
+      title={title}
+    >
       {children}
     </EditView>
   </EditBase>
 );
 
 export interface EditViewProps {
+  disableBreadcrumb?: boolean;
   title?: ReactNode | string | false;
   actions?: ReactNode;
   children?: ReactNode;
   className?: string;
 }
 
+/**
+ * The view component for Edit pages with layout and UI.
+ *
+ * @internal
+ */
 export const EditView = ({
+  disableBreadcrumb,
   title,
   actions,
   className,
@@ -78,19 +115,21 @@ export const EditView = ({
 
   return (
     <>
-      <Breadcrumb>
-        {hasDashboard && (
+      {!disableBreadcrumb && (
+        <Breadcrumb>
+          {hasDashboard && (
+            <BreadcrumbItem>
+              <Link to="/">
+                <Translate i18nKey="ra.page.dashboard">Home</Translate>
+              </Link>
+            </BreadcrumbItem>
+          )}
           <BreadcrumbItem>
-            <Link to="/">
-              <Translate i18nKey="ra.page.dashboard">Home</Translate>
-            </Link>
+            <Link to={listLink}>{listLabel}</Link>
           </BreadcrumbItem>
-        )}
-        <BreadcrumbItem>
-          <Link to={listLink}>{listLabel}</Link>
-        </BreadcrumbItem>
-        <BreadcrumbPage>{recordRepresentation}</BreadcrumbPage>
-      </Breadcrumb>
+          <BreadcrumbPage>{recordRepresentation}</BreadcrumbPage>
+        </Breadcrumb>
+      )}
       <div
         className={cn(
           "flex justify-between items-start flex-wrap gap-2 my-2",

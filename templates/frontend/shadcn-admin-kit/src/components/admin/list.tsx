@@ -3,11 +3,10 @@ import {
   BreadcrumbItem,
   BreadcrumbPage,
 } from "@/components/admin/breadcrumb";
+import type { ListBaseProps, ListControllerResult, RaRecord } from "ra-core";
 import {
+  FilterContext,
   ListBase,
-  ListBaseProps,
-  type ListControllerResult,
-  RaRecord,
   Translate,
   useGetResourceLabel,
   useHasDashboard,
@@ -15,15 +14,42 @@ import {
   useResourceDefinition,
   useTranslate,
 } from "ra-core";
-import { ReactElement, ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Link } from "react-router";
 import { cn } from "@/lib/utils";
-import { FilterContext, FilterElementProps } from "@/hooks/filter-context";
 import { CreateButton } from "@/components/admin/create-button";
 import { ExportButton } from "@/components/admin/export-button";
 import { ListPagination } from "@/components/admin/list-pagination";
-import { FilterForm } from "@/components/admin/filter-form";
+import { FilterButton, FilterForm } from "@/components/admin/filter-form";
 
+/**
+ * A complete list page with breadcrumb, title, filters, and pagination.
+ *
+ * It fetches a list of records from the data provider (via ra-core hooks),
+ * puts them in a ListContext, renders a default layout (breadcrumb, title,
+ * action buttons, inline filters, pagination), then renders its children
+ * (usually a <DataTable>).
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/list/ List documentation}
+ *
+ * @example
+ * import { DataTable, List } from "@/components/admin";
+ *
+ * export const UserList = () => (
+ *   <List>
+ *     <DataTable>
+ *       <DataTable.Col source="id" />
+ *       <DataTable.Col source="name" />
+ *       <DataTable.Col source="username" />
+ *       <DataTable.Col source="email" />
+ *       <DataTable.Col source="address.street" />
+ *       <DataTable.Col source="phone" />
+ *       <DataTable.Col source="website" />
+ *       <DataTable.Col source="company.name" />
+ *     </DataTable>
+ *   </List>
+ * );
+ */
 export const List = <RecordType extends RaRecord = RaRecord>(
   props: ListProps<RecordType>,
 ) => {
@@ -64,13 +90,18 @@ export const List = <RecordType extends RaRecord = RaRecord>(
 };
 
 export interface ListProps<RecordType extends RaRecord = RaRecord>
-  extends ListBaseProps<RecordType>,
-    ListViewProps<RecordType> {}
+  extends ListBaseProps<RecordType>, ListViewProps<RecordType> {}
 
+/**
+ * The view component for List pages with layout and UI.
+ *
+ * @internal
+ */
 export const ListView = <RecordType extends RaRecord = RaRecord>(
   props: ListViewProps<RecordType>,
 ) => {
   const {
+    disableBreadcrumb,
     filters,
     pagination = defaultPagination,
     title,
@@ -97,16 +128,18 @@ export const ListView = <RecordType extends RaRecord = RaRecord>(
 
   return (
     <>
-      <Breadcrumb>
-        {hasDashboard && (
-          <BreadcrumbItem>
-            <Link to="/">
-              <Translate i18nKey="ra.page.dashboard">Home</Translate>
-            </Link>
-          </BreadcrumbItem>
-        )}
-        <BreadcrumbPage>{resourceLabel}</BreadcrumbPage>
-      </Breadcrumb>
+      {!disableBreadcrumb && (
+        <Breadcrumb>
+          {hasDashboard && (
+            <BreadcrumbItem>
+              <Link to="/">
+                <Translate i18nKey="ra.page.dashboard">Home</Translate>
+              </Link>
+            </BreadcrumbItem>
+          )}
+          <BreadcrumbPage>{resourceLabel}</BreadcrumbPage>
+        </Breadcrumb>
+      )}
 
       <FilterContext.Provider value={filters}>
         <div className="flex justify-between items-start flex-wrap gap-2 my-2">
@@ -115,6 +148,7 @@ export const ListView = <RecordType extends RaRecord = RaRecord>(
           </h2>
           {actions ?? (
             <div className="flex items-center gap-2">
+              {filters && filters.length > 0 ? <FilterButton /> : null}
               {hasCreate ? <CreateButton /> : null}
               {<ExportButton />}
             </div>
@@ -131,16 +165,49 @@ export const ListView = <RecordType extends RaRecord = RaRecord>(
 
 const defaultPagination = <ListPagination />;
 
+export const Empty = () => {
+  const translate = useTranslate();
+  const resource = useResourceContext();
+  const getResourceLabel = useGetResourceLabel();
+  const { hasCreate } = useResourceDefinition({ resource });
+  if (!resource) {
+    return null;
+  }
+  const resourceName = translate(`resources.${resource}.forcedCaseName`, {
+    smart_count: 0,
+    _: resource ? getResourceLabel(resource, 0) : undefined,
+  });
+  const emptyMessage = translate("ra.page.empty", { name: resourceName });
+  const inviteMessage = translate("ra.page.invite");
+
+  return (
+    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-2 text-center">
+      <h2 className="text-2xl font-semibold">
+        {translate(`resources.${resource}.empty`, {
+          _: emptyMessage,
+        })}
+      </h2>
+      {hasCreate ? (
+        <>
+          <p className="text-muted-foreground">
+            {translate(`resources.${resource}.invite`, {
+              _: inviteMessage,
+            })}
+          </p>
+          <CreateButton />
+        </>
+      ) : null}
+    </div>
+  );
+};
+
 export interface ListViewProps<RecordType extends RaRecord = RaRecord> {
   children?: ReactNode;
+  disableBreadcrumb?: boolean;
   render?: (props: ListControllerResult<RecordType, Error>) => ReactNode;
   actions?: ReactElement | false;
-  filters?: ReactElement<FilterElementProps>[];
+  filters?: ReactNode[];
   pagination?: ReactNode;
   title?: ReactNode | string | false;
   className?: string;
 }
-
-export type FiltersType =
-  | ReactElement<FilterElementProps>
-  | ReactElement<FilterElementProps>[];

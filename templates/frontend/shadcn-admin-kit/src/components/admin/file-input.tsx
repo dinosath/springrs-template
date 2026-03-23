@@ -1,28 +1,26 @@
 import * as React from "react";
-import {
-  Children,
-  isValidElement,
-  type ComponentType,
-  type ReactElement,
-  type ReactNode,
-  useEffect,
+import type {
+  ComponentType,
+  ReactElement,
+  ReactNode,
   HTMLAttributes,
 } from "react";
+import { Children, isValidElement, useEffect } from "react";
+import type { InputProps } from "ra-core";
 import {
   FieldTitle,
-  InputProps,
   RecordContextProvider,
   shallowEqual,
   useInput,
   useTranslate,
 } from "ra-core";
-import {
-  useDropzone,
-  type DropzoneOptions,
+import type {
+  DropzoneOptions,
   FileRejection,
   DropEvent,
   DropzoneInputProps,
 } from "react-dropzone";
+import { useDropzone } from "react-dropzone";
 import { XCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -30,6 +28,36 @@ import { FormError, FormField, FormLabel } from "@/components/admin/form";
 import { InputHelperText } from "@/components/admin/input-helper-text";
 import { Button } from "@/components/ui/button";
 
+/**
+ * File upload input with drag-and-drop support and preview capabilities.
+ *
+ * Use `<FileInput>` for document uploads, images, PDFs, CSV files, or any file attachment field.
+ * Powered by react-dropzone with support for multiple files, file type restrictions (accept), and
+ * size constraints. Pass a child component (typically `<FileField>`) to render file previews.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/fileinput/ FileInput documentation}
+ * @see {@link https://react-dropzone.js.org/ React Dropzone documentation}
+ *
+ * @example
+ * import {
+ *   Edit,
+ *   SimpleForm,
+ *   TextInput,
+ *   FileInput,
+ *   FileField,
+ * } from '@/components/admin';
+ *
+ * const DocumentEdit = () => (
+ *   <Edit>
+ *     <SimpleForm>
+ *       <TextInput source="title" />
+ *       <FileInput source="attachments" multiple accept={{ 'image/*': [], 'application/pdf': [] }}>
+ *         <FileField source="src" title="title" />
+ *       </FileInput>
+ *     </SimpleForm>
+ *   </Edit>
+ * );
+ */
 export const FileInput = (props: FileInputProps) => {
   const {
     alwaysOn,
@@ -279,6 +307,11 @@ export interface TransformedFile {
   title: string;
 }
 
+/**
+ * Preview container for uploaded files in `<FileInput>`, with a remove button.
+ *
+ * @internal
+ */
 export const FileInputPreview = (props: FileInputPreviewProps) => {
   const {
     className,
@@ -306,6 +339,7 @@ export const FileInputPreview = (props: FileInputPreviewProps) => {
   return (
     <div className={cn("flex flex-row gap-1", className)} {...rest}>
       <Button
+        type="button"
         variant="ghost"
         size="icon"
         className="h-6 w-6 rounded-full shadow-sm cursor-pointer"

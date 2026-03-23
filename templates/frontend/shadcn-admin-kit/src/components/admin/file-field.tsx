@@ -1,16 +1,18 @@
-import { HTMLAttributes } from "react";
+import type { HTMLAttributes } from "react";
 import get from "lodash/get";
-import {
-  type ExtractRecordPaths,
-  type HintedString,
-  useFieldValue,
-  useTranslate,
-} from "ra-core";
+import type { ExtractRecordPaths, HintedString } from "ra-core";
+import { useFieldValue, useTranslate } from "ra-core";
 import { cn } from "@/lib/utils";
 import type { FieldProps } from "@/lib/field.type";
 
 /**
- * Render a link to a file based on a path contained in a record field
+ * Displays a downloadable file link with customizable title and target.
+ *
+ * This field renders file URLs as clickable links that can open in new tabs or trigger downloads.
+ * It supports arrays of files and prevents click bubbling in DataTable rows.
+ * To be used with RecordField or DataTable.Col components, or anywhere a RecordContext is available.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/filefield/ FileField documentation}
  *
  * @example
  * import { FileField } from '@/components/admin/file-field';
@@ -109,8 +111,8 @@ export const FileField = <
 export interface FileFieldProps<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   RecordType extends Record<string, any> = Record<string, any>,
-> extends FieldProps<RecordType>,
-    HTMLAttributes<HTMLElement> {
+>
+  extends FieldProps<RecordType>, HTMLAttributes<HTMLElement> {
   /**
    * The source of the link to the file, for an array of files.
    */

@@ -5,7 +5,9 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 /**
- * UI to enable/disable a field
+ * A toggleable field item with drag-and-drop reordering, used by ColumnsSelector
+ *
+ * @internal
  */
 export const FieldToggle = (props: FieldToggleProps) => {
   const { selected, label, onToggle, onMove, source, index } = props;
@@ -22,7 +24,7 @@ export const FieldToggle = (props: FieldToggleProps) => {
   const handleDragStart = () => {
     document.addEventListener(
       "dragover",
-      handleDocumentDragOver as EventListener
+      handleDocumentDragOver as EventListener,
     );
   };
 
@@ -36,7 +38,7 @@ export const FieldToggle = (props: FieldToggleProps) => {
     }
     const elementAtDragCoordinates = document.elementFromPoint(
       x.current,
-      y.current
+      y.current,
     );
     let dropItem =
       elementAtDragCoordinates === null
@@ -104,7 +106,7 @@ export const FieldToggle = (props: FieldToggleProps) => {
     selectedItem.dataset.dragActive = "false";
     document.removeEventListener(
       "dragover",
-      handleDocumentDragOver as EventListener
+      handleDocumentDragOver as EventListener,
     );
   };
 
@@ -125,7 +127,7 @@ export const FieldToggle = (props: FieldToggleProps) => {
       data-index={index}
       className={cn(
         "flex justify-between items-center py-1",
-        "data-[drag-active=true]:bg-transparent data-[drag-active=true]:text-transparent data-[drag-active=true]:outline data-[drag-active=true]:outline-1 data-[drag-active=true]:outline-border"
+        "data-[drag-active=true]:bg-transparent data-[drag-active=true]:text-transparent data-[drag-active=true]:outline data-[drag-active=true]:outline-1 data-[drag-active=true]:outline-border",
       )}
     >
       <label
@@ -155,7 +157,7 @@ export interface FieldToggleProps {
   onToggle?: (event: boolean) => void;
   onMove?: (
     dragIndex: string | number,
-    dropIndex: string | number | null
+    dropIndex: string | number | null,
   ) => void;
   source: string;
   index: number | string;

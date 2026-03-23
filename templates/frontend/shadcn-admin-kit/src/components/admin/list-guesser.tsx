@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useState, useEffect } from "react";
+import type { RaRecord } from "ra-core";
 import {
   ListBase,
   getElementsFromRecords,
@@ -7,10 +8,10 @@ import {
   useListContext,
   usePrevious,
   useResourceContext,
-  RaRecord,
 } from "ra-core";
 import { useLocation } from "react-router";
-import { ListProps, ListView, ListViewProps } from "@/components/admin/list";
+import type { ListProps, ListViewProps } from "@/components/admin/list";
+import { ListView } from "@/components/admin/list";
 import { capitalize, singularize } from "inflection";
 import { DataTable } from "@/components/admin/data-table";
 import { ArrayField } from "@/components/admin/array-field";
@@ -18,7 +19,28 @@ import { BadgeField } from "@/components/admin/badge-field";
 import { ReferenceField } from "@/components/admin/reference-field";
 import { SingleFieldList } from "@/components/admin/single-field-list";
 import { ReferenceArrayField } from "@/components/admin/reference-array-field";
+import { GuesserEmpty } from "@/components/admin/guesser-empty";
 
+/**
+ * A list page that automatically generates a DataTable from your data.
+ *
+ * Inspects the first record to infer field types and automatically creates appropriate columns.
+ * Useful for rapid prototyping. Logs generated code to console.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/list/#scaffolding-a-list-page ListGuesser documentation}
+ *
+ * @example
+ * import { Admin, ListGuesser } from '@/components/admin';
+ * import { Resource } from 'ra-core';
+ * import { dataProvider } from './dataProvider';
+ *
+ * const App = () => (
+ *   <Admin dataProvider={dataProvider}>
+ *     // ...
+ *     <Resource name="posts" list={ListGuesser} />
+ *   </Admin>
+ * );
+ */
 export const ListGuesser = <RecordType extends RaRecord = RaRecord>(
   props: Omit<ListProps, "children"> & { enableLog?: boolean },
 ) => {
@@ -26,6 +48,7 @@ export const ListGuesser = <RecordType extends RaRecord = RaRecord>(
     debounce,
     disableAuthentication,
     disableSyncWithLocation,
+    empty,
     exporter,
     filter,
     filterDefaultValues,
@@ -47,6 +70,7 @@ export const ListGuesser = <RecordType extends RaRecord = RaRecord>(
       debounce={debounce}
       disableAuthentication={disableAuthentication}
       disableSyncWithLocation={disableSyncWithLocation}
+      empty={empty === undefined ? <GuesserEmpty /> : empty}
       exporter={exporter}
       filter={filter}
       filterDefaultValues={filterDefaultValues}
@@ -69,7 +93,7 @@ const ListViewGuesser = (
   const { data } = useListContext();
   const resource = useResourceContext();
   const [child, setChild] = useState<React.ReactElement | null>(null);
-  const { enableLog = import.meta.env.MODE === "development", ...rest } = props;
+  const { enableLog = process.env.NODE_ENV === "development", ...rest } = props;
 
   useEffect(() => {
     setChild(null);

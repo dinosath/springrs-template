@@ -42,22 +42,24 @@ import { cn } from "@/lib/utils";
 /**
  * Renders a button that lets users show / hide columns in a DataTable
  *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/columnsbutton/ ColumnsButton documentation}
+ *
  * @example
- * import { ColumnsButton, DataTable } from 'shadcn-admin-kit';
+ * import { List, DataTable, EditButton, CreateButton, ExportButton, ColumnsButton } from '@/components/admin';
  *
- * const PostListActions = () => (
- *   <div className="flex items-center gap-2">
-        <ColumnsButton />
-        <FilterButton />
- *   </div>
- * );
- *
- * const PostList = () => (
- *   <List actions={<PostListActions />}>
+ * const PostsList = () => (
+ *   <List
+ *     actions={<>
+ *       <ColumnsButton />
+ *       <CreateButton />
+ *       <ExportButton />
+ *     </>}
+ *   >
  *     <DataTable>
  *       <DataTable.Col source="title" />
- *       <DataTable.Col source="author" />
-         ...
+ *       <DataTable.Col source="body" />
+ *       <DataTable.Col source="updated_at" />
+ *       <EditButton />
  *     </DataTable>
  *   </List>
  * );
@@ -171,44 +173,44 @@ export const ColumnsSelector = ({ children }: ColumnsSelectorProps) => {
   const shouldDisplaySearchInput = childrenArray.length > 5;
 
   return createPortal(
-    <ul className="max-h-[50vh] p-1 overflow-auto">
-      {shouldDisplaySearchInput ? (
-        <li className="pb-2" tabIndex={-1}>
-          <div className="relative">
-            <Input
-              value={columnFilter}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                setColumnFilter(e.target.value);
-              }}
-              placeholder={translate("ra.action.search_columns", {
-                _: "Search columns",
-              })}
-              className="pr-8"
-            />
-            <Search className="absolute right-2 top-2 h-4 w-4 text-muted-foreground" />
-            {columnFilter && (
-              <button
-                onClick={() => setColumnFilter("")}
-                className="absolute right-8 top-2 h-4 w-4 text-muted-foreground"
-                aria-label="Clear"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        </li>
-      ) : null}
-      {paddedColumnRanks.map((position, index) => (
-        <DataTableColumnRankContext.Provider value={position} key={index}>
-          <DataTableColumnFilterContext.Provider
+    <div>
+      {shouldDisplaySearchInput && (
+        <div className="relative p-1">
+          <Input
             value={columnFilter}
-            key={index}
-          >
-            {childrenArray[position]}
-          </DataTableColumnFilterContext.Provider>
-        </DataTableColumnRankContext.Provider>
-      ))}
-      <li className="text-center mt-2 px-3">
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              setColumnFilter(e.target.value);
+            }}
+            placeholder={translate("ra.action.search_columns", {
+              _: "Search columns",
+            })}
+            className="pr-8"
+          />
+          <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          {columnFilter && (
+            <button
+              onClick={() => setColumnFilter("")}
+              className="absolute right-8 top-2 h-4 w-4 text-muted-foreground"
+              aria-label="Clear"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
+      <ul className="max-h-[50vh] p-1 overflow-auto">
+        {paddedColumnRanks.map((position, index) => (
+          <DataTableColumnRankContext.Provider value={position} key={index}>
+            <DataTableColumnFilterContext.Provider
+              value={columnFilter}
+              key={index}
+            >
+              {childrenArray[position]}
+            </DataTableColumnFilterContext.Provider>
+          </DataTableColumnRankContext.Provider>
+        ))}
+      </ul>
+      <div className="text-center py-1">
         <Button
           variant="outline"
           size="sm"
@@ -219,8 +221,8 @@ export const ColumnsSelector = ({ children }: ColumnsSelectorProps) => {
         >
           Reset
         </Button>
-      </li>
-    </ul>,
+      </div>
+    </div>,
     container,
   );
 };

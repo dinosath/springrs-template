@@ -22,9 +22,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
+import type {
   ChoicesProps,
   InputProps,
+  SupportCreateSuggestionOptions,
+} from "ra-core";
+import {
   useChoices,
   useChoicesContext,
   useGetRecordRepresentation,
@@ -32,13 +35,45 @@ import {
   useTranslate,
   FieldTitle,
   useEvent,
+  useSupportCreateSuggestion,
 } from "ra-core";
 import { InputHelperText } from "./input-helper-text";
-import {
-  SupportCreateSuggestionOptions,
-  useSupportCreateSuggestion,
-} from "@/hooks/useSupportCreateSuggestion";
+import { PopoverProps } from "@radix-ui/react-popover";
 
+/**
+ * Form control that lets users choose a value from a list using a dropdown with autocompletion.
+ *
+ * This input allows editing scalar values with a searchable dropdown interface. It supports creating
+ * new choices on the fly and works seamlessly inside ReferenceInput for editing foreign key relationships.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/autocompleteinput/ AutocompleteInput documentation}
+ *
+ * @example
+ * import {
+ *   Create,
+ *   SimpleForm,
+ *   AutocompleteInput,
+ *   ReferenceInput,
+ * } from '@/components/admin';
+ *
+ * const PostCreate = () => (
+ *   <Create>
+ *     <SimpleForm>
+ *       <AutocompleteInput
+ *         source="category"
+ *         choices={[
+ *           { id: 'tech', name: 'Tech' },
+ *           { id: 'lifestyle', name: 'Lifestyle' },
+ *           { id: 'people', name: 'People' },
+ *         ]}
+ *       />
+ *       <ReferenceInput label="Author" source="author_id" reference="authors">
+ *         <AutocompleteInput />
+ *       </ReferenceInput>
+ *     </SimpleForm>
+ *   </Create>
+ * );
+ */
 export const AutocompleteInput = (
   props: Omit<InputProps, "source"> &
     Omit<SupportCreateSuggestionOptions, "handleChange" | "filter"> &
@@ -52,7 +87,7 @@ export const AutocompleteInput = (
       inputText?:
         | React.ReactNode
         | ((option: any | undefined) => React.ReactNode);
-    },
+    } & Pick<PopoverProps, "modal">,
 ) => {
   const {
     filterToQuery = DefaultFilterToQuery,
@@ -64,6 +99,7 @@ export const AutocompleteInput = (
     createItemLabel,
     onCreate,
     optionText,
+    modal,
   } = props;
   const {
     allChoices = [],
@@ -129,8 +165,7 @@ export const AutocompleteInput = (
       setOpen(false);
     },
     [
-      field.value,
-      field.onChange,
+      field,
       getChoiceValue,
       isRequired,
       setFilterValue,
@@ -181,7 +216,7 @@ export const AutocompleteInput = (
           </FormLabel>
         )}
         <FormControl>
-          <Popover open={open} onOpenChange={handleOpenChange}>
+          <Popover open={open} onOpenChange={handleOpenChange} modal={modal}>
             <PopoverTrigger asChild>
               <Button
                 variant="outline"
@@ -197,7 +232,7 @@ export const AutocompleteInput = (
                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-full p-0">
+            <PopoverContent className="w-full max-w-(--radix-popover-trigger-width) p-0">
               {/* We handle the filtering ourselves */}
               <Command shouldFilter={!isFromReference}>
                 <CommandInput

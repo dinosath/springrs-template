@@ -1,20 +1,37 @@
 import * as React from "react";
-import { Children, ReactNode } from "react";
-import { Form, type FormProps } from "ra-core";
+import type { ReactNode } from "react";
+import { Children } from "react";
+import type { FormProps } from "ra-core";
+import { Form } from "ra-core";
 import { cn } from "@/lib/utils";
 import { CancelButton } from "@/components/admin/cancel-button";
 import { SaveButton } from "@/components/admin/form";
 
+/**
+ * A simple form layout with vertical stacking, validation, and default toolbar.
+ *
+ * Automatically includes a toolbar with Cancel and Save buttons unless you provide a custom toolbar.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/simpleform/ SimpleForm documentation}
+ *
+ * @example
+ * import { Create, SimpleForm, TextInput } from '@/components/admin';
+ *
+ * const PostCreate = () => (
+ *   <Create>
+ *     <SimpleForm>
+ *       <TextInput source="title" />
+ *       <TextInput source="body" />
+ *     </SimpleForm>
+ *   </Create>
+ * );
+ */
 export const SimpleForm = ({
   children,
   className,
   toolbar = defaultFormToolbar,
   ...rest
-}: {
-  children: ReactNode;
-  className?: string;
-  toolbar?: ReactNode;
-} & FormProps) => (
+}: SimpleFormProps) => (
   <Form
     className={cn(`flex flex-col gap-4 w-full max-w-lg`, className)}
     {...rest}
@@ -24,6 +41,22 @@ export const SimpleForm = ({
   </Form>
 );
 
+/**
+ * A sticky form toolbar with default Cancel and Save buttons.
+ *
+ * Provides a consistent action bar for forms that sticks to the bottom of the viewport. By default,
+ * renders Cancel and Save buttons, but you can provide custom buttons as children.
+ *
+ * @example
+ * import { FormToolbar, CancelButton, SaveButton } from '@/components/admin';
+ *
+ * const CustomToolbar = () => (
+ *     <FormToolbar>
+ *         <CancelButton />
+ *         <SaveButton label="Publish" />
+ *     </FormToolbar>
+ * );
+ */
 export const FormToolbar = ({
   children,
   className,
@@ -47,6 +80,12 @@ export const FormToolbar = ({
     )}
   </div>
 );
+
+export type SimpleFormProps = {
+  children: ReactNode;
+  className?: string;
+  toolbar?: ReactNode;
+} & FormProps;
 
 export interface FormToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
   children?: ReactNode;

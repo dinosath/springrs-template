@@ -1,72 +1,34 @@
 import * as React from "react";
-import { ReactElement } from "react";
+import type { ReactElement } from "react";
+import type { InputProps, UseReferenceArrayInputParams } from "ra-core";
 import {
-  InputProps,
   useReferenceArrayInputController,
   ResourceContextProvider,
   ChoicesContextProvider,
-  UseReferenceArrayInputParams,
 } from "ra-core";
 import { AutocompleteArrayInput } from "@/components/admin/autocomplete-array-input";
 
 /**
- * An Input component for fields containing a list of references to another resource.
- * Useful for 'hasMany' relationship.
+ * Form input for editing arrays of foreign key relationships with autocompletion.
+ *
+ * This component fetches related records from a reference resource and displays them
+ * in a searchable multi-select interface using AutocompleteArrayInput.
+ * Use it to edit one-to-many or many-to-many relationships, where the current record
+ * has an array of foreign keys to another resource.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/referencearrayinput/ ReferenceArrayInput documentation}
  *
  * @example
- * The post object has many tags, so the post resource looks like:
- * {
- *    id: 1234,
- *    tag_ids: [ "1", "23", "4" ]
- * }
+ * import { Edit, SimpleForm, TextInput, ReferenceArrayInput } from '@/components/admin';
  *
- * ReferenceArrayInput component fetches the current resources (using
- * `dataProvider.getMany()`) as well as possible resources (using
- * `dataProvider.getList()`) in the reference endpoint. It then
- * delegates rendering to its child component, to which it makes the possible
- * choices available through the ChoicesContext.
- *
- * @example
- * export const PostEdit = () => (
- *     <Edit>
- *         <SimpleForm>
- *             <ReferenceArrayInput source="tag_ids" reference="tags" />
- *         </SimpleForm>
- *     </Edit>
+ * const PostEdit = () => (
+ *   <Edit>
+ *     <SimpleForm>
+ *       <TextInput source="title" />
+ *       <ReferenceArrayInput source="tag_ids" reference="tags" />
+ *     </SimpleForm>
+ *   </Edit>
  * );
- *
- * By default, restricts the possible values to 25. You can extend this limit
- * by setting the `perPage` prop.
- *
- * @example
- * <ReferenceArrayInput
- *      source="tag_ids"
- *      reference="tags"
- *      perPage={100}
- * />
- *
- * By default, orders the possible values by id desc. You can change this order
- * by setting the `sort` prop (an object with `field` and `order` properties).
- *
- * @example
- * <ReferenceArrayInput
- *      source="tag_ids"
- *      reference="tags"
- *      sort={{ field: 'name', order: 'ASC' }}
- * />
- *
- * Also, you can filter the query used to populate the possible values. Use the
- * `filter` prop for that.
- *
- * @example
- * <ReferenceArrayInput
- *      source="tag_ids"
- *      reference="tags"
- *      filter={{ is_public: true }}
- * />
- *
- * The enclosed component may filter results. ReferenceArrayInput create a ChoicesContext which provides
- * a `setFilters` function. You can call this function to filter the results.
  */
 export const ReferenceArrayInput = (props: ReferenceArrayInputProps) => {
   const {
@@ -77,7 +39,7 @@ export const ReferenceArrayInput = (props: ReferenceArrayInputProps) => {
   } = props;
   if (React.Children.count(children) !== 1) {
     throw new Error(
-      "<ReferenceArrayInput> only accepts a single child (like <AutocompleteArrayInput>)"
+      "<ReferenceArrayInput> only accepts a single child (like <AutocompleteArrayInput>)",
     );
   }
 
@@ -100,7 +62,6 @@ const defaultChildren = <AutocompleteArrayInput />;
 const defaultFilter = {};
 
 export interface ReferenceArrayInputProps
-  extends InputProps,
-    UseReferenceArrayInputParams {
+  extends InputProps, UseReferenceArrayInputParams {
   children?: ReactElement;
 }

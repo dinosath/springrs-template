@@ -1,6 +1,6 @@
 import { useTranslate } from "ra-core";
 import * as React from "react";
-import { MouseEvent } from "react";
+import type { MouseEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -11,8 +11,16 @@ import {
 } from "@/components/ui/tooltip";
 
 /**
- * A Button with a tooltip which ensures the tooltip is closed on click to avoid ghost tooltips
- * when the button position changes.
+ * A button with a tooltip that ensures the tooltip is closed on click to avoid ghost tooltips.
+ *
+ * Prevents ghost tooltips that can appear when the button position changes after interaction.
+ * Supports internationalization for the label text.
+ *
+ * @example
+ * // Basic usage with icon and label
+ * <IconButtonWithTooltip label="Delete">
+ *   <Trash2 />
+ * </IconButtonWithTooltip>
  */
 export const IconButtonWithTooltip = ({
   label,
@@ -70,8 +78,7 @@ export const IconButtonWithTooltip = ({
   );
 };
 
-export interface IconButtonWithTooltipProps
-  extends React.ComponentProps<"button"> {
+export interface IconButtonWithTooltipProps extends React.ComponentProps<"button"> {
   label: React.ReactNode;
   children: React.ReactNode;
 }

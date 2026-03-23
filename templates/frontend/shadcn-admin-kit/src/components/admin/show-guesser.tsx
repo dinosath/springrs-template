@@ -1,17 +1,12 @@
-import {
-  ReactNode,
-  useEffect,
-  useState,
-  isValidElement,
-  Children,
-} from "react";
+import type { ReactNode } from "react";
+import { useEffect, useState, isValidElement, Children } from "react";
+import type { InferredTypeMap } from "ra-core";
 import {
   ShowBase,
   InferredElement,
   getElementsFromRecords,
   useResourceContext,
   useShowContext,
-  InferredTypeMap,
 } from "ra-core";
 import { capitalize, singularize } from "inflection";
 import { ShowView } from "@/components/admin/show";
@@ -24,13 +19,26 @@ import { BadgeField } from "@/components/admin/badge-field";
 import { SingleFieldList } from "@/components/admin/single-field-list";
 import { ReferenceArrayField } from "@/components/admin/reference-array-field";
 
-export const ShowGuesser = (props: { enableLog?: boolean }) => (
-  <ShowBase>
-    <ShowViewGuesser {...props} />
-  </ShowBase>
-);
+/**
+ * A show page that automatically generates fields from your data.
+ *
+ * Inspects the record to infer field types and automatically creates appropriate display fields.
+ * Useful for rapid prototyping. Logs generated code to console when enableLog is true.
+ *
+ * @example
+ * import { ShowGuesser } from '@/components/admin';
+ *
+ * export const PostShow = () => <ShowGuesser enableLog />;
+ */
+export const ShowGuesser = (props: ShowGuesserProps) => {
+  return (
+    <ShowBase>
+      <ShowViewGuesser {...props} />
+    </ShowBase>
+  );
+};
 
-const ShowViewGuesser = (props: { enableLog?: boolean }) => {
+const ShowViewGuesser = (props: ShowGuesserProps) => {
   const resource = useResourceContext();
 
   if (!resource) {
@@ -39,7 +47,7 @@ const ShowViewGuesser = (props: { enableLog?: boolean }) => {
 
   const { record } = useShowContext();
   const [child, setChild] = useState<ReactNode>(null);
-  const { enableLog = import.meta.env.MODE === "development", ...rest } = props;
+  const { enableLog = process.env.NODE_ENV === "development", ...rest } = props;
 
   useEffect(() => {
     setChild(null);
@@ -96,6 +104,10 @@ ${inferredChild.getRepresentation()}
 
   return <ShowView {...rest}>{child}</ShowView>;
 };
+
+interface ShowGuesserProps {
+  enableLog?: boolean;
+}
 
 const showFieldTypes: InferredTypeMap = {
   show: {

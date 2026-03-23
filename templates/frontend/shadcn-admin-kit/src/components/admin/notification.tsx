@@ -1,7 +1,8 @@
 import * as React from "react";
 import { useCallback, useEffect } from "react";
-import { Toaster, type ToasterProps, toast } from "sonner";
-import { useTheme } from "@/components/admin/theme-provider";
+import type { ToasterProps } from "sonner";
+import { Toaster, toast } from "sonner";
+import { useTheme } from "@/components/admin/use-theme";
 import {
   CloseNotificationContext,
   useNotificationContext,
@@ -9,6 +10,27 @@ import {
   useTranslate,
 } from "ra-core";
 
+/**
+ * Displays notifications triggered with the useNotify hook.
+ *
+ * Supports different notification types (info, success, warning, error) and undoable mutations.
+ * Automatically adapts to the current theme (light/dark).
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/notification Notification documentation}
+ * @see {@link https://marmelab.com/ra-core/usenotify/ useNotify hook}
+ *
+ * @example
+ * // Trigger a notification
+ * import { useNotify } from 'ra-core';
+ *
+ * const NotifyButton = () => {
+ *   const notify = useNotify();
+ *   const handleClick = () => {
+ *     notify('Comment approved', { type: 'success' });
+ *   };
+ *   return <button onClick={handleClick}>Notify</button>;
+ * };
+ */
 export const Notification = (props: ToasterProps) => {
   const translate = useTranslate();
   const { notifications, takeNotification } = useNotificationContext();
@@ -20,7 +42,8 @@ export const Notification = (props: ToasterProps) => {
       const notification = takeNotification();
       if (notification) {
         const { message, type = "info", notificationOptions } = notification;
-        const { messageArgs, undoable } = notificationOptions || {};
+        const { messageArgs, undoable, autoHideDuration } =
+          notificationOptions || {};
 
         const beforeunload = (e: BeforeUnloadEvent) => {
           e.preventDefault();
@@ -33,9 +56,10 @@ export const Notification = (props: ToasterProps) => {
           window.addEventListener("beforeunload", beforeunload);
         }
 
+        const mutation = takeMutation();
+
         const handleExited = () => {
           if (undoable) {
-            const mutation = takeMutation();
             if (mutation) {
               mutation({ isUndo: false });
             }
@@ -44,7 +68,6 @@ export const Notification = (props: ToasterProps) => {
         };
 
         const handleUndo = () => {
-          const mutation = takeMutation();
           if (mutation) {
             mutation({ isUndo: true });
           }
@@ -55,11 +78,15 @@ export const Notification = (props: ToasterProps) => {
           ? typeof message === "string"
             ? translate(message, messageArgs)
             : React.isValidElement(message)
-            ? message
-            : undefined
+              ? message
+              : undefined
           : undefined;
 
+        const duration =
+          autoHideDuration === null ? Infinity : autoHideDuration;
+
         toast[type](finalMessage, {
+          duration,
           action: undoable
             ? {
                 label: translate("ra.action.undo"),

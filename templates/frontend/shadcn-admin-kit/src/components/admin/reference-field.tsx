@@ -1,23 +1,48 @@
-import {
+import type {
+  ExtractRecordPaths,
   LinkToType,
   RaRecord,
+  UseReferenceFieldControllerResult,
+} from "ra-core";
+import {
   ReferenceFieldBase,
-  type UseReferenceFieldControllerResult,
   useFieldValue,
   useGetRecordRepresentation,
   useReferenceFieldContext,
   useTranslate,
-  ExtractRecordPaths,
 } from "ra-core";
-import { MouseEvent, ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { Link } from "react-router";
-import { UseQueryOptions } from "@tanstack/react-query";
+import type { UseQueryOptions } from "@tanstack/react-query";
 
+/**
+ * Displays a field from a related record by following a foreign key relationship.
+ *
+ * This field fetches the related record using the foreign key value and displays it using the record representation.
+ * It supports linking to the related record's show or edit page.
+ * To be used with RecordField or DataTable.Col components, or anywhere a RecordContext is available.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/referencefield/ ReferenceField documentation}
+ *
+ * @example
+ * import { List, DataTable, ReferenceField } from '@/components/admin';
+ *
+ * const PostList = () => (
+ *   <List>
+ *     <DataTable>
+ *       <DataTable.Col source="title" />
+ *       <DataTable.Col label="Author">
+ *         <ReferenceField source="author_id" reference="authors" link="show" />
+ *       </DataTable.Col>
+ *     </DataTable>
+ *   </List>
+ * );
+ */
 export const ReferenceField = <
   RecordType extends RaRecord = RaRecord,
-  ReferenceRecordType extends RaRecord = RaRecord
+  ReferenceRecordType extends RaRecord = RaRecord,
 >(
-  props: ReferenceFieldProps<RecordType, ReferenceRecordType>
+  props: ReferenceFieldProps<RecordType, ReferenceRecordType>,
 ) => {
   const { loading, error, empty, render, ...rest } = props;
   const id = useFieldValue<RecordType>(props);
@@ -43,7 +68,7 @@ export const ReferenceField = <
 
 export interface ReferenceFieldProps<
   RecordType extends RaRecord = RaRecord,
-  ReferenceRecordType extends RaRecord = RaRecord
+  ReferenceRecordType extends RaRecord = RaRecord,
 > extends Partial<ReferenceFieldViewProps<ReferenceRecordType>> {
   children?: ReactNode;
   queryOptions?: UseQueryOptions<RaRecord[], Error> & {
@@ -62,9 +87,9 @@ const stopPropagation = (e: MouseEvent<HTMLAnchorElement>) =>
   e.stopPropagation();
 
 export const ReferenceFieldView = <
-  ReferenceRecordType extends RaRecord = RaRecord
+  ReferenceRecordType extends RaRecord = RaRecord,
 >(
-  props: ReferenceFieldViewProps<ReferenceRecordType>
+  props: ReferenceFieldViewProps<ReferenceRecordType>,
 ) => {
   const {
     children,
@@ -80,7 +105,7 @@ export const ReferenceFieldView = <
   const getRecordRepresentation = useGetRecordRepresentation(reference);
   const translate = useTranslate();
 
-  if (error && errorElement !== false) {
+  if (!referenceRecord && error && errorElement !== false) {
     return errorElement;
   }
   if (isPending && loading !== false) {
@@ -100,11 +125,11 @@ export const ReferenceFieldView = <
 
   if (link) {
     return (
-      <div className={className}>
+      <span className={className}>
         <Link to={link} onClick={stopPropagation}>
           {child}
         </Link>
-      </div>
+      </span>
     );
   }
 
@@ -112,7 +137,7 @@ export const ReferenceFieldView = <
 };
 
 export interface ReferenceFieldViewProps<
-  ReferenceRecordType extends RaRecord = RaRecord
+  ReferenceRecordType extends RaRecord = RaRecord,
 > {
   children?: ReactNode;
   className?: string;

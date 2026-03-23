@@ -10,7 +10,6 @@ import { authProvider } from '@/lib/authProvider';
 {% if entities | items | selectattr("1.attributes") | length > 0 -%}
 import {Resource} from "ra-core";
 {% endif %}
-import { Dashboard } from "./components/dashboard/Dashboard";
 
 {% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
 import {{ entity_name | camel_case }} from "./resources/{{ entity_name | snake_case }}"
@@ -23,12 +22,15 @@ const dataProvider = grpcDataProvider;
 function App() {
     return (
         <Admin
+            {% if 'rest' in protocols  -%}
             dataProvider={dataProvider}
+            {% elif 'grpc' in protocols -%}
+            dataProvider={grpcDataProvider}
+            {% endif -%}
             {% if authentication != 'none' -%}
             authProvider={authProvider}
             requireAuth
             {% endif -%}
-            dashboard={Dashboard}
         >
             {% for entity_name,entity in entities | items | selectattr("1.attributes") -%}
             <Resource { ...{{ entity_name | camel_case }} }/>

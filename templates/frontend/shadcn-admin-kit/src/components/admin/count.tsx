@@ -1,32 +1,35 @@
+import type { SortPayload } from "ra-core";
 import {
   useResourceContext,
   useGetList,
   useTimeout,
   useCreatePath,
-  SortPayload,
 } from "ra-core";
 import { CircleX, LoaderCircle } from "lucide-react";
 
 import { Link } from "react-router";
 
 /**
- * Fetch and render the number of records of a given resource
+ * Fetches and displays the item count for a resource.
  *
- * Relies on dataProvider.getList() returning a total property
+ * Uses dataProvider.getList() with minimal pagination to fetch the total count.
+ * Displays a loading spinner while fetching and an error icon on failure.
+ * By default, uses the current resource from ResourceContext.
  *
- * @example // Display the number of records in the current resource (based on ResourceContext)
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/count/ Count documentation}
+ *
+ * @example
+ * import { Count } from '@/components/admin';
+ * // Display the number of records in the current resource
  * <Count />
  *
- * @example // Display the number of posts
+ * @example
+ * // Display the number of posts
  * <Count resource="posts" />
  *
- * @example // Display the number of published posts
- * <Count resource="posts" filter={{ is_published: true }}/>
- *
- * @example // Display the number of posts, with a custom Typography variant
- * <Count resource="posts" variant="h1" />
- *
- * @see ReferenceManyCount for a similar component which fetches the number of records related to the current one
+ * @example
+ * // Display the number of published posts with a link
+ * <Count resource="posts" filter={{ is_published: true }} link />
  */
 export const Count = (props: CountProps) => {
   const {
@@ -41,7 +44,7 @@ export const Count = (props: CountProps) => {
   const resource = useResourceContext(props);
   if (!resource) {
     throw new Error(
-      "The Count component must be used inside a ResourceContext or must be passed a resource prop."
+      "The Count component must be used inside a ResourceContext or must be passed a resource prop.",
     );
   }
   const oneSecondHasPassed = useTimeout(timeout);

@@ -1,11 +1,12 @@
-import { ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { InferredTypeMap } from "ra-core";
 import {
   EditBase,
   InferredElement,
   useResourceContext,
   useEditContext,
   getElementsFromRecords,
-  InferredTypeMap,
 } from "ra-core";
 import { capitalize, singularize } from "inflection";
 import { EditView } from "@/components/admin/edit";
@@ -16,7 +17,27 @@ import { ReferenceInput } from "@/components/admin/reference-input";
 import { AutocompleteInput } from "@/components/admin/autocomplete-input";
 import { ReferenceArrayInput } from "@/components/admin/reference-array-input";
 
-export const EditGuesser = (props: { enableLog?: boolean }) => {
+/**
+ * An edit page that automatically generates a form from your data.
+ *
+ * Inspects the record to infer field types and automatically creates appropriate inputs.
+ * Useful for rapid prototyping. Logs generated code to console.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/edit/#scaffolding-an-edit-page EditGuesser documentation}
+ *
+ * @example
+ * import { Admin, EditGuesser } from '@/components/admin';
+ * import { Resource } from 'ra-core';
+ * import dataProvider from './dataProvider';
+ *
+ * const App = () => (
+ *   <Admin dataProvider={dataProvider}>
+ *     ...
+ *     <Resource name="customers" edit={EditGuesser} />
+ *   </Admin>
+ * );
+ */
+export const EditGuesser = (props: EditGuesserProps) => {
   return (
     <EditBase>
       <EditViewGuesser {...props} />
@@ -24,7 +45,7 @@ export const EditGuesser = (props: { enableLog?: boolean }) => {
   );
 };
 
-const EditViewGuesser = (props: { enableLog?: boolean }) => {
+const EditViewGuesser = (props: EditGuesserProps) => {
   const resource = useResourceContext();
 
   if (!resource) {
@@ -33,7 +54,7 @@ const EditViewGuesser = (props: { enableLog?: boolean }) => {
 
   const { record } = useEditContext();
   const [child, setChild] = useState<ReactNode>(null);
-  const { enableLog = import.meta.env.MODE === "development", ...rest } = props;
+  const { enableLog = process.env.NODE_ENV === "development", ...rest } = props;
 
   useEffect(() => {
     setChild(null);
@@ -89,6 +110,10 @@ ${representation}
 
   return <EditView {...rest}>{child}</EditView>;
 };
+
+interface EditGuesserProps {
+  enableLog?: boolean;
+}
 
 const editFieldTypes: InferredTypeMap = {
   form: {

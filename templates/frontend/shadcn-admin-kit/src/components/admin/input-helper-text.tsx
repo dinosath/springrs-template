@@ -1,7 +1,13 @@
 import { useTranslate } from "ra-core";
-import { isValidElement, ReactNode } from "react";
+import type { ReactNode } from "react";
+import { isValidElement } from "react";
 import { FormDescription } from "@/components/admin/form";
 
+/**
+ * Renders helper text below form inputs with automatic translation support.
+ *
+ * @internal
+ */
 export function InputHelperText({ helperText }: { helperText?: ReactNode }) {
   const translate = useTranslate();
 

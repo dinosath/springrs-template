@@ -3,6 +3,7 @@ import {
   BreadcrumbItem,
   BreadcrumbPage,
 } from "@/components/admin/breadcrumb";
+import type { ShowBaseProps } from "ra-core";
 import {
   ShowBase,
   Translate,
@@ -13,28 +14,54 @@ import {
   useGetResourceLabel,
   useResourceContext,
   useResourceDefinition,
-  type ShowBaseProps,
 } from "ra-core";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 import { EditButton } from "@/components/admin/edit-button";
 
 export interface ShowProps
-  extends ShowViewProps,
-    Omit<ShowBaseProps, "children"> {}
+  extends ShowViewProps, Omit<ShowBaseProps, "children"> {}
 
+/**
+ * A complete show page with breadcrumb, title, and default actions.
+ *
+ * Combines data fetching and UI layout for displaying record details. Inside, use
+ * RecordField to display individual fields with labels.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/show/ Show documentation}
+ *
+ * @example
+ * import { RecordField, NumberField, ReferenceField, Show } from "@/components/admin";
+ *
+ * export const ProductShow = () => (
+ *   <Show>
+ *     <div className="flex flex-col gap-4">
+ *       <RecordField source="reference" />
+ *       <RecordField source="category_id">
+ *         <ReferenceField source="category_id" reference="categories" />
+ *       </RecordField>
+ *       <RecordField
+ *         source="price"
+ *         render={(record) => Intl.NumberFormat().format(record.price)}
+ *       />
+ *       <RecordField source="size" field={NumberField} />
+ *     </div>
+ *   </Show>
+ * );
+ */
 export const Show = ({
-  disableAuthentication,
-  id,
-  queryOptions,
-  resource,
   actions,
-  title,
   children,
   className,
-  render,
+  disableAuthentication,
+  disableBreadcrumb,
+  id,
   loading,
+  queryOptions,
+  render,
+  resource,
+  title,
 }: ShowProps) => (
   <ShowBase
     id={id}
@@ -44,7 +71,12 @@ export const Show = ({
     render={render}
     loading={loading}
   >
-    <ShowView title={title} actions={actions} className={className}>
+    <ShowView
+      title={title}
+      actions={actions}
+      className={className}
+      disableBreadcrumb={disableBreadcrumb}
+    >
       {children}
     </ShowView>
   </ShowBase>
@@ -52,18 +84,37 @@ export const Show = ({
 
 export interface ShowViewProps {
   actions?: ReactNode;
-  title?: ReactNode | string | false;
+  disableBreadcrumb?: boolean;
   children: ReactNode;
   className?: string;
   emptyWhileLoading?: boolean;
+  title?: ReactNode | string | false;
 }
 
+/**
+ * The view component for Show pages with layout and UI.
+ *
+ * Renders breadcrumb, title, and default actions for show pages. Use Show instead unless you need
+ * custom data fetching logic with ShowBase.
+ *
+ * @example
+ * import { ShowBase, ShowView, SimpleShowLayout } from '@/components/admin';
+ *
+ * export const PostShow = () => (
+ *     <ShowBase>
+ *         <ShowView>
+ *             <SimpleShowLayout>...</SimpleShowLayout>
+ *         </ShowView>
+ *     </ShowBase>
+ * );
+ */
 export const ShowView = ({
   actions,
-  title,
   children,
   className,
+  disableBreadcrumb,
   emptyWhileLoading,
+  title,
 }: ShowViewProps) => {
   const context = useShowContext();
 
@@ -96,19 +147,21 @@ export const ShowView = ({
 
   return (
     <>
-      <Breadcrumb>
-        {hasDashboard && (
+      {!disableBreadcrumb && (
+        <Breadcrumb>
+          {hasDashboard && (
+            <BreadcrumbItem>
+              <Link to="/">
+                <Translate i18nKey="ra.page.dashboard">Home</Translate>
+              </Link>
+            </BreadcrumbItem>
+          )}
           <BreadcrumbItem>
-            <Link to="/">
-              <Translate i18nKey="ra.page.dashboard">Home</Translate>
-            </Link>
+            <Link to={listLink}>{listLabel}</Link>
           </BreadcrumbItem>
-        )}
-        <BreadcrumbItem>
-          <Link to={listLink}>{listLabel}</Link>
-        </BreadcrumbItem>
-        <BreadcrumbPage>{recordRepresentation}</BreadcrumbPage>
-      </Breadcrumb>
+          <BreadcrumbPage>{recordRepresentation}</BreadcrumbPage>
+        </Breadcrumb>
+      )}
       <div
         className={cn(
           "flex justify-between items-start flex-wrap gap-2 my-2",

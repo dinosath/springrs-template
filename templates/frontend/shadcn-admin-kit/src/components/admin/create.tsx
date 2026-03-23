@@ -3,9 +3,9 @@ import {
   BreadcrumbItem,
   BreadcrumbPage,
 } from "@/components/admin/breadcrumb";
+import type { CreateBaseProps } from "ra-core";
 import {
   CreateBase,
-  type CreateBaseProps,
   Translate,
   useCreateContext,
   useCreatePath,
@@ -13,21 +13,47 @@ import {
   useHasDashboard,
   useResourceContext,
 } from "ra-core";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 
 export type CreateProps = CreateViewProps & CreateBaseProps;
 
+/**
+ * A complete create page with breadcrumb, title, and actions.
+ *
+ * Combines data fetching, form context, and UI layout for creating new records. Renders breadcrumb
+ * navigation, page title, and wraps your form components.
+ *
+ * @see {@link https://marmelab.com/shadcn-admin-kit/docs/create/ Create documentation}
+ *
+ * @example
+ * import { Create, SimpleForm, TextInput } from '@/components/admin';
+ *
+ * export const PostCreate = () => (
+ *   <Create>
+ *     <SimpleForm>
+ *       <TextInput source="title" />
+ *       <TextInput source="body" />
+ *     </SimpleForm>
+ *   </Create>
+ * );
+ */
 export const Create = ({
-  title,
-  children,
   actions,
+  children,
   className,
+  disableBreadcrumb,
+  title,
   ...rest
 }: CreateProps) => (
   <CreateBase {...rest}>
-    <CreateView title={title} actions={actions} className={className}>
+    <CreateView
+      actions={actions}
+      className={className}
+      disableBreadcrumb={disableBreadcrumb}
+      title={title}
+    >
       {children}
     </CreateView>
   </CreateBase>
@@ -35,13 +61,20 @@ export const Create = ({
 
 export type CreateViewProps = {
   actions?: ReactNode;
+  disableBreadcrumb?: boolean;
   children: ReactNode;
   className?: string;
   title?: ReactNode | string | false;
 };
 
+/**
+ * The view component for Create pages with layout and UI.
+ *
+ * @internal
+ */
 export const CreateView = ({
   actions,
+  disableBreadcrumb,
   title,
   children,
   className,
@@ -65,21 +98,23 @@ export const CreateView = ({
 
   return (
     <>
-      <Breadcrumb>
-        {hasDashboard && (
+      {!disableBreadcrumb && (
+        <Breadcrumb>
+          {hasDashboard && (
+            <BreadcrumbItem>
+              <Link to="/">
+                <Translate i18nKey="ra.page.dashboard">Home</Translate>
+              </Link>
+            </BreadcrumbItem>
+          )}
           <BreadcrumbItem>
-            <Link to="/">
-              <Translate i18nKey="ra.page.dashboard">Home</Translate>
-            </Link>
+            <Link to={listLink}>{listLabel}</Link>
           </BreadcrumbItem>
-        )}
-        <BreadcrumbItem>
-          <Link to={listLink}>{listLabel}</Link>
-        </BreadcrumbItem>
-        <BreadcrumbPage>
-          <Translate i18nKey="ra.action.create">Create</Translate>
-        </BreadcrumbPage>
-      </Breadcrumb>
+          <BreadcrumbPage>
+            <Translate i18nKey="ra.action.create">Create</Translate>
+          </BreadcrumbPage>
+        </Breadcrumb>
+      )}
       <div
         className={cn(
           "flex justify-between items-start flex-wrap gap-2 my-2",
