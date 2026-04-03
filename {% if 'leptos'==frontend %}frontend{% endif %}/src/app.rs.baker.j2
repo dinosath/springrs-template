@@ -1,0 +1,155 @@
+use leptos::prelude::*;
+
+use crate::components::{layout::Layout, nav::Nav};
+use crate::pages::home::Home;
+{% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+use crate::resources::{{ entity_name | snake_case }}::{
+    {{ entity_name | pascal_case }}List,
+    {{ entity_name | pascal_case }}Create,
+    {{ entity_name | pascal_case }}Edit,
+};
+{% endfor %}
+
+/// All navigable views in the admin panel.
+#[derive(Clone, PartialEq, Debug)]
+pub enum View {
+    Dashboard,
+    {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+    {{ entity_name | pascal_case }}List,
+    {{ entity_name | pascal_case }}Create,
+    {{ entity_name | pascal_case }}Edit(i64),
+    {% endfor %}
+}
+
+impl View {
+    pub fn title(&self) -> &'static str {
+        match self {
+            View::Dashboard => "Dashboard",
+            {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+            View::{{ entity_name | pascal_case }}List => "{{ entity_name | pascal_case }} List",
+            View::{{ entity_name | pascal_case }}Create => "Create {{ entity_name | pascal_case }}",
+            View::{{ entity_name | pascal_case }}Edit(_) => "Edit {{ entity_name | pascal_case }}",
+            {% endfor %}
+        }
+    }
+}
+
+/// Root App component.  Provides the global `current_view` signal and renders
+/// the two-column admin layout (sidebar nav / main content).
+#[component]
+pub fn App() -> impl IntoView {
+    let (current_view, set_current_view) = signal(View::Dashboard);
+
+    view! {
+        <div class="flex h-screen bg-gray-50 dark:bg-gray-900 font-sans">
+            // Sidebar
+            <Nav current_view=current_view set_current_view=set_current_view />
+            // Vertical divider
+            <div class="w-px bg-gray-200 dark:bg-gray-700 shrink-0"></div>
+            // Main content area
+            <main class="flex-1 overflow-y-auto">
+                <Layout view_title=move || current_view.get().title()>
+                    <PageContent current_view=current_view set_current_view=set_current_view />
+                </Layout>
+            </main>
+        </div>
+    }
+}
+
+/// Renders the correct page component based on the current view signal.
+#[component]
+fn PageContent(
+    current_view: ReadSignal<View>,
+    set_current_view: WriteSignal<View>,
+) -> impl IntoView {
+    move || match current_view.get() {
+        View::Dashboard => view! { <Home /> }.into_any(),
+        {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+        View::{{ entity_name | pascal_case }}List => view! {
+            <{{ entity_name | pascal_case }}List set_view=set_current_view />
+        }.into_any(),
+        View::{{ entity_name | pascal_case }}Create => view! {
+            <{{ entity_name | pascal_case }}Create set_view=set_current_view />
+        }.into_any(),
+        View::{{ entity_name | pascal_case }}Edit(id) => view! {
+            <{{ entity_name | pascal_case }}Edit id=id set_view=set_current_view />
+        }.into_any(),
+        {% endfor %}
+    }
+}
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+use crate::resources::{{ entity_name | snake_case }}::{
+    {{ entity_name | pascal_case }}List,
+    {{ entity_name | pascal_case }}Create,
+    {{ entity_name | pascal_case }}Edit,
+};
+{% endfor %}
+
+/// All navigable views in the admin panel.
+#[derive(Clone, PartialEq, Debug)]
+pub enum View {
+    Dashboard,
+    {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+    {{ entity_name | pascal_case }}List,
+    {{ entity_name | pascal_case }}Create,
+    {{ entity_name | pascal_case }}Edit(i64),
+    {% endfor %}
+}
+
+impl View {
+    pub fn title(&self) -> &'static str {
+        match self {
+            View::Dashboard => "Dashboard",
+            {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+            View::{{ entity_name | pascal_case }}List => "{{ entity_name | pascal_case }} List",
+            View::{{ entity_name | pascal_case }}Create => "Create {{ entity_name | pascal_case }}",
+            View::{{ entity_name | pascal_case }}Edit(_) => "Edit {{ entity_name | pascal_case }}",
+            {% endfor %}
+        }
+    }
+}
+
+/// Root App component.  Provides the global `current_view` signal and renders
+/// the two-column admin layout (sidebar nav / main content).
+#[component]
+pub fn App() -> impl IntoView {
+    let (current_view, set_current_view) = signal(View::Dashboard);
+
+    view! {
+        <div class="flex h-screen bg-gray-50 dark:bg-gray-900 font-sans">
+            // Sidebar
+            <Nav current_view=current_view set_current_view=set_current_view />
+            // Vertical divider
+            <Separator orientation="vertical" />
+            // Main content area
+            <main class="flex-1 overflow-y-auto">
+                <Layout view_title=move || current_view.get().title()>
+                    <PageContent current_view=current_view set_current_view=set_current_view />
+                </Layout>
+            </main>
+        </div>
+    }
+}
+
+/// Renders the correct page component based on the current view signal.
+#[component]
+fn PageContent(
+    current_view: ReadSignal<View>,
+    set_current_view: WriteSignal<View>,
+) -> impl IntoView {
+    move || match current_view.get() {
+        View::Dashboard => view! { <Home /> }.into_any(),
+        {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+        View::{{ entity_name | pascal_case }}List => view! {
+            <{{ entity_name | pascal_case }}List set_view=set_current_view />
+        }.into_any(),
+        View::{{ entity_name | pascal_case }}Create => view! {
+            <{{ entity_name | pascal_case }}Create set_view=set_current_view />
+        }.into_any(),
+        View::{{ entity_name | pascal_case }}Edit(id) => view! {
+            <{{ entity_name | pascal_case }}Edit id=id set_view=set_current_view />
+        }.into_any(),
+        {% endfor %}
+    }
+}

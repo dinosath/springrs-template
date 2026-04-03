@@ -18,7 +18,7 @@ exclude = ["e2e"]
 
 [workspace.dependencies]
 automod = "1.0"
-{{ 'sea-orm-migration = { version = "2.0.0-rc.35", features = ["runtime-tokio-rustls", "sqlx-postgres"], default-features = false }' if use_seaorm_migrations }}
+{{ 'sea-orm-migration = { version = "2.0.0-rc.37", features = ["runtime-tokio-rustls", "sqlx-postgres"], default-features = false }' if use_seaorm_migrations }}
 tokio = { version = "1", features = ["full"] }
 
 [dependencies]
@@ -36,12 +36,12 @@ summer = {git="https://github.com/dinosath/spring-rs", branch="master"}
 {% if database=='postgres' -%}
 #summer-sea-orm = { version = "0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
 summer-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="master", version="0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
-sea-orm = { version = "2.0.0-rc.35", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
+sea-orm = { version = "2.0.0-rc.37", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
 {% endif -%}
 {{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'rest' in protocols }}
 {{ 'static-serve = "0.5"' if frontend != 'none' }}
 {% if authentication == 'jwt' and 'rest' in protocols -%}
-webgates = { git = "https://github.com/emirror-de/webgates", branch = "nightly", features = ["server", "insecure-fast-hash"] }
+webgates = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
 webgates-axum = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
 webgates-repositories = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
 {% endif -%}
@@ -55,6 +55,7 @@ tokio.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
 
 [dev-dependencies]
+axum-test = "19.1"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
 reqwest = { version = "0.13", features = ["json", "cookies"], default-features = false }

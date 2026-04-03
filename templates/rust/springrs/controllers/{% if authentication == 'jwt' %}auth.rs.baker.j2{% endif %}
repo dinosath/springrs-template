@@ -21,7 +21,7 @@ use webgates::{
     codecs::jwt::RegisteredClaims,
     prelude::{Credentials, Group, Role},
 };
-use webgates_repositories::services::AccountInsertService;
+use webgates_repositories::services::account_insert::AccountInsertService;
 
 use crate::services::auth_plugin::{AuthUser, AUTH_STATE};
 
@@ -104,7 +104,7 @@ pub async fn register(Json(req): Json<AuthRequest>) -> Result<impl IntoResponse>
             Arc::clone(&auth.secret_repo),
         )
         .await
-        .map_err(|e| WebError::from(KnownWebError::internal_server_error(e.to_string())))?;
+        .map_err(|e: webgates_repositories::errors::Error| WebError::from(KnownWebError::internal_server_error(e.to_string())))?;
 
     let token = verify_and_issue_token(Credentials::new(&req.username, &req.password)).await?;
     Ok((StatusCode::CREATED, Json(TokenResponse { token })))

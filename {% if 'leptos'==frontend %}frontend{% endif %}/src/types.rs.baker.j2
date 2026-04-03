@@ -1,0 +1,76 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Generic entity row used when deserialising API responses.
+/// Each attribute is stored as `Option<Value>` to handle nullable fields
+/// and future API changes without compile-time errors.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct EntityRow {
+    pub id: Option<i64>,
+    #[serde(flatten)]
+    pub fields: std::collections::HashMap<String, Value>,
+}
+
+impl EntityRow {
+    pub fn get_id(&self) -> i64 {
+        self.id.unwrap_or_else(|| {
+            self.fields
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+        })
+    }
+
+    pub fn get_str(&self, key: &str) -> String {
+        self.fields
+            .get(key)
+            .map(|v| match v {
+                Value::String(s) => s.clone(),
+                Value::Null => String::new(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn get_bool(&self, key: &str) -> bool {
+        self.fields
+            .get(key)
+            .and_then(|v| v.as_bool())
+            .unwrap_or_default()
+    }
+
+    pub fn get_i64(&self, key: &str) -> i64 {
+        self.fields
+            .get(key)
+            .and_then(|v| v.as_i64())
+            .unwrap_or_default()
+    }
+}
+
+/// Pagination metadata returned alongside list responses.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ListResponse {
+    pub data: Option<Vec<EntityRow>>,
+    pub total: Option<i64>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+impl ListResponse {
+    pub fn items(self) -> Vec<EntityRow> {
+        self.data.unwrap_or_default()
+    }
+}
+
+/// Deserialise any API list – accepts both `[...]` arrays and `{ data: [...] }` envelopes.
+pub fn parse_list(value: Value) -> Vec<EntityRow> {
+    if value.is_array() {
+        serde_json::from_value(value).unwrap_or_default()
+    } else if let Some(arr) = value.get("data").and_then(|d| d.as_array()) {
+        arr.iter()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .collect()
+    } else {
+        vec![]
+    }
+}

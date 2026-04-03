@@ -95,6 +95,7 @@ questions:
     default: none
     choices:
       - shadcn-admin-kit
+      - leptos
       - none
 
   automod:

@@ -1,0 +1,501 @@
+/// CRUD UI components for the {{ entity_name | pascal_case }} resource.
+use leptos::prelude::*;
+use serde_json::{json, Value};
+use crate::api::{{ entity_name | snake_case }} as api;
+use crate::app::View;
+use crate::types::EntityRow;
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+fn display_value(v: &Value) -> String {
+    match v {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }
+}
+
+// ─── shared CSS helpers ───────────────────────────────────────────────────────
+
+const BTN_PRIMARY: &str = "inline-flex items-center px-3 py-1.5 rounded-md text-sm font-medium bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed";
+const BTN_OUTLINE: &str = "inline-flex items-center px-3 py-1.5 rounded-md text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed";
+const BTN_DANGER: &str = "inline-flex items-center px-3 py-1.5 rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed";
+const INPUT_CLS: &str = "block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400";
+
+// ─── List ─────────────────────────────────────────────────────────────────────
+
+/// Table/list view for all {{ entity_name | pascal_case }} records.
+#[component]
+pub fn {{ entity_name | pascal_case }}List(
+    set_view: WriteSignal<View>,
+) -> impl IntoView {
+    // Reactive resource that refetches when a write counter changes.
+    let refresh = RwSignal::new(0u32);
+    let items = Resource::new(
+        move || refresh.get(),
+        |_| api::list(),
+    );
+
+    let on_create = move |_| set_view.set(View::{{ entity_name | pascal_case }}Create);
+
+    view! {
+        <div class="space-y-4">
+            // Toolbar
+            <div class="flex items-center justify-between">
+                <p class="text-sm text-gray-500 dark:text-gray-400">
+                    "Manage {{ entity.info.displayName | default(entity_name | pascal_case) | lower }} records"
+                </p>
+                <button class=BTN_PRIMARY on:click=on_create>
+                    "+ New {{ entity_name | pascal_case }}"
+                </button>
+            </div>
+            <hr class="border-gray-200 dark:border-gray-700" />
+
+            // Data table
+            <Suspense fallback=move || view! {
+                <div class="space-y-2">
+                    <div class="h-8 w-full rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+                    <div class="h-8 w-full rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+                    <div class="h-8 w-full rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+                </div>
+            }>
+                {move || items.get().map(|result| match result {
+                    Err(err) => view! {
+                        <div class="rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 text-sm text-red-700 dark:text-red-400">
+                            "Error loading {{ entity_name | plural | lower }}: " {err}
+                        </div>
+                    }.into_any(),
+                    Ok(rows) if rows.is_empty() => view! {
+                        <div class="py-12 text-center text-gray-500 dark:text-gray-400 text-sm">
+                            "No {{ entity_name | plural | lower }} found.  Click \"+ New {{ entity_name | pascal_case }}\" to create the first one."
+                        </div>
+                    }.into_any(),
+                    Ok(rows) => view! {
+                        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+                                <thead class="bg-gray-50 dark:bg-gray-800">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">"ID"</th>
+                                        {% for attr_name, attr_prop in entity.attributes | items %}
+                                        {% if attr_prop.type not in ['relation', 'component'] %}
+                                        <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                            "{{ attr_name | pascal_case }}"
+                                        </th>
+                                        {% endif %}
+                                        {% endfor %}
+                                        <th class="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">"Actions"</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-100 dark:divide-gray-800">
+                                    {rows.into_iter().map(|row| {
+                                        let set_view = set_view.clone();
+                                        let refresh = refresh.clone();
+                                        let row = row.clone();
+                                        view! {
+                                            <{{ entity_name | pascal_case }}Row
+                                                row=row
+                                                on_edit=move |id| set_view.set(View::{{ entity_name | pascal_case }}Edit(id))
+                                                on_deleted=move || refresh.update(|n| *n += 1)
+                                            />
+                                        }
+                                    }).collect_view()}
+                                </tbody>
+                            </table>
+                        </div>
+                    }.into_any(),
+                })}
+            </Suspense>
+        </div>
+    }
+}
+
+// ─── Row component with inline delete confirmation ────────────────────────────
+
+#[component]
+fn {{ entity_name | pascal_case }}Row(
+    row: EntityRow,
+    on_edit: impl Fn(i64) + 'static + Clone,
+    on_deleted: impl Fn() + 'static + Clone,
+) -> impl IntoView {
+    let id = row.get_id();
+    let delete_open = RwSignal::new(false);
+    let delete_error = RwSignal::new(Option::<String>::None);
+    let deleting = RwSignal::new(false);
+
+    let on_edit_click = {
+        let on_edit = on_edit.clone();
+        move |_| on_edit(id)
+    };
+
+    let confirm_delete = {
+        let on_deleted = on_deleted.clone();
+        move |_| {
+            let on_deleted = on_deleted.clone();
+            deleting.set(true);
+            delete_error.set(None);
+            wasm_bindgen_futures::spawn_local(async move {
+                match api::delete(id).await {
+                    Ok(_) => { delete_open.set(false); on_deleted(); }
+                    Err(e) => { delete_error.set(Some(e)); deleting.set(false); }
+                }
+            });
+        }
+    };
+
+    view! {
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <td class="px-4 py-3 text-gray-700 dark:text-gray-300 font-mono text-xs">{id}</td>
+            {% for attr_name, attr_prop in entity.attributes | items %}
+            {% if attr_prop.type not in ['relation', 'component'] %}
+            <td class="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-xs truncate">
+                {% if attr_prop.type == 'boolean' %}
+                <span class=move || if row.get_bool("{{ attr_name | snake_case }}") {
+                    "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                } else {
+                    "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+                }>
+                    {move || if row.get_bool("{{ attr_name | snake_case }}") { "yes" } else { "no" }}
+                </span>
+                {% elif attr_prop.enum %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300">
+                    {row.get_str("{{ attr_name | snake_case }}")}
+                </span>
+                {% else %}
+                {row.get_str("{{ attr_name | snake_case }}")}
+                {% endif %}
+            </td>
+            {% endif %}
+            {% endfor %}
+            <td class="px-4 py-3 text-right space-x-2">
+                <button class=BTN_OUTLINE on:click=on_edit_click>"Edit"</button>
+                <button class=BTN_DANGER on:click=move |_| delete_open.set(true)>"Delete"</button>
+
+                // Delete confirmation modal
+                {move || if delete_open.get() {
+                    let confirm_delete = confirm_delete.clone();
+                    view! {
+                        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                            <div class="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+                                <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                                    "Delete {{ entity_name | pascal_case }}"
+                                </h2>
+                                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                    "Are you sure you want to permanently delete this record? This action cannot be undone."
+                                </p>
+                                {move || delete_error.get().map(|e| view! {
+                                    <div class="mb-4 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 text-sm text-red-700 dark:text-red-400">
+                                        {e}
+                                    </div>
+                                })}
+                                <div class="flex justify-end gap-2">
+                                    <button class=BTN_OUTLINE on:click=move |_| delete_open.set(false)>
+                                        "Cancel"
+                                    </button>
+                                    <button
+                                        class=BTN_DANGER
+                                        on:click=confirm_delete.clone()
+                                        disabled=move || deleting.get()
+                                    >
+                                        {move || if deleting.get() { "Deleting\u{2026}" } else { "Confirm Delete" }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }}
+            </td>
+        </tr>
+    }
+}
+
+// ─── Create form ──────────────────────────────────────────────────────────────
+
+/// Form for creating a new {{ entity_name | pascal_case }}.
+#[component]
+pub fn {{ entity_name | pascal_case }}Create(
+    set_view: WriteSignal<View>,
+) -> impl IntoView {
+    // One signal per non-relation field
+    {% for attr_name, attr_prop in entity.attributes | items %}
+    {% if attr_prop.type not in ['relation', 'component'] %}
+    let {{ attr_name | snake_case }}_val = RwSignal::new(String::new());
+    {% endif %}
+    {% endfor %}
+
+    let submitting = RwSignal::new(false);
+    let error_msg = RwSignal::new(Option::<String>::None);
+
+    let on_submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        submitting.set(true);
+        error_msg.set(None);
+
+        let body = json!({
+            {% for attr_name, attr_prop in entity.attributes | items %}
+            {% if attr_prop.type not in ['relation', 'component'] %}
+            "{{ attr_name | snake_case }}": {{ attr_name | snake_case }}_val.get(),
+            {% endif %}
+            {% endfor %}
+        });
+
+        let set_view = set_view.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::create(&body).await {
+                Ok(_) => set_view.set(View::{{ entity_name | pascal_case }}List),
+                Err(e) => { error_msg.set(Some(e)); submitting.set(false); }
+            }
+        });
+    };
+
+    view! {
+        <div class="max-w-2xl bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-6">
+                "Create {{ entity_name | pascal_case }}"
+            </h2>
+            <form on:submit=on_submit class="space-y-4">
+                {move || error_msg.get().map(|e| view! {
+                    <div class="rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 text-sm text-red-700 dark:text-red-400">
+                        {e}
+                    </div>
+                })}
+
+                {% for attr_name, attr_prop in entity.attributes | items %}
+                {% if attr_prop.type not in ['relation', 'component'] %}
+                <div class="space-y-1">
+                    <label for="{{ attr_name | snake_case }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        "{{ attr_name | pascal_case }}"
+                    </label>
+                    {% if attr_prop.type == 'text' %}
+                    <textarea
+                        id="{{ attr_name | snake_case }}"
+                        class=INPUT_CLS
+                        rows="3"
+                        placeholder="{{ attr_name | pascal_case }}"
+                        prop:value=move || {{ attr_name | snake_case }}_val.get()
+                        on:input=move |ev| {{ attr_name | snake_case }}_val.set(event_target_value(&ev))
+                    />
+                    {% elif attr_prop.type == 'boolean' %}
+                    <div class="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            id="{{ attr_name | snake_case }}"
+                            class="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                            prop:checked=move || {{ attr_name | snake_case }}_val.get() == "true"
+                            on:change=move |ev| {{ attr_name | snake_case }}_val.set(event_target_checked(&ev).to_string())
+                        />
+                        <span class="text-sm text-gray-600 dark:text-gray-400">"{{ attr_name | pascal_case }}"</span>
+                    </div>
+                    {% elif attr_prop.enum %}
+                    <select
+                        id="{{ attr_name | snake_case }}"
+                        class=INPUT_CLS
+                        prop:value=move || {{ attr_name | snake_case }}_val.get()
+                        on:change=move |ev| {{ attr_name | snake_case }}_val.set(event_target_value(&ev))
+                    >
+                        <option value="">"Select\u{2026}"</option>
+                        {% for choice in attr_prop.enum %}
+                        <option value="{{ choice }}">"{{ choice | pascal_case }}"</option>
+                        {% endfor %}
+                    </select>
+                    {% else %}
+                    <input
+                        {% if attr_prop.format == 'email' %}type="email"
+                        {% elif attr_prop.format == 'url' or attr_prop.format == 'uri' %}type="url"
+                        {% elif attr_prop.type == 'integer' or attr_prop.type == 'number' %}type="number"
+                        {% else %}type="text"{% endif %}
+                        id="{{ attr_name | snake_case }}"
+                        class=INPUT_CLS
+                        placeholder="{{ attr_name | pascal_case }}"
+                        prop:value=move || {{ attr_name | snake_case }}_val.get()
+                        on:input=move |ev| {{ attr_name | snake_case }}_val.set(event_target_value(&ev))
+                    />
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                <div class="flex gap-2 pt-2">
+                    <button
+                        type="button"
+                        class=BTN_OUTLINE
+                        on:click=move |_| set_view.set(View::{{ entity_name | pascal_case }}List)
+                    >
+                        "Cancel"
+                    </button>
+                    <button type="submit" class=BTN_PRIMARY disabled=move || submitting.get()>
+                        {move || if submitting.get() { "Saving\u{2026}" } else { "Create {{ entity_name | pascal_case }}" }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    }
+}
+
+// ─── Edit form ────────────────────────────────────────────────────────────────
+
+/// Form for editing an existing {{ entity_name | pascal_case }}.
+#[component]
+pub fn {{ entity_name | pascal_case }}Edit(
+    id: i64,
+    set_view: WriteSignal<View>,
+) -> impl IntoView {
+    {% for attr_name, attr_prop in entity.attributes | items %}
+    {% if attr_prop.type not in ['relation', 'component'] %}
+    let {{ attr_name | snake_case }}_val = RwSignal::new(String::new());
+    {% endif %}
+    {% endfor %}
+
+    let existing = Resource::new(
+        move || id,
+        move |id| async move { api::get_by_id(id).await },
+    );
+
+    let _ = Effect::new(move |_| {
+        if let Some(Ok(row)) = existing.get() {
+            {% for attr_name, attr_prop in entity.attributes | items %}
+            {% if attr_prop.type not in ['relation', 'component'] %}
+            {{ attr_name | snake_case }}_val.set(row.get_str("{{ attr_name | snake_case }}"));
+            {% endif %}
+            {% endfor %}
+        }
+    });
+
+    let submitting = RwSignal::new(false);
+    let error_msg = RwSignal::new(Option::<String>::None);
+
+    let on_submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        submitting.set(true);
+        error_msg.set(None);
+
+        let body = json!({
+            {% for attr_name, attr_prop in entity.attributes | items %}
+            {% if attr_prop.type not in ['relation', 'component'] %}
+            "{{ attr_name | snake_case }}": {{ attr_name | snake_case }}_val.get(),
+            {% endif %}
+            {% endfor %}
+        });
+
+        let set_view = set_view.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::update(id, &body).await {
+                Ok(_) => set_view.set(View::{{ entity_name | pascal_case }}List),
+                Err(e) => { error_msg.set(Some(e)); submitting.set(false); }
+            }
+        });
+    };
+
+    view! {
+        <Suspense fallback=move || view! {
+            <div class="space-y-2 max-w-2xl">
+                <Skeleton class="h-8 w-48 rounded" />
+                <Skeleton class="h-10 w-full rounded" />
+                <Skeleton class="h-10 w-full rounded" />
+            </div>
+        }>
+            {move || existing.get().map(|result| {
+                let load_err = result.err();
+                view! {
+                    <Card class="max-w-2xl">
+                        <CardHeader>
+                            <CardTitle>"Edit {{ entity_name | pascal_case }} #" {id}</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            {load_err.map(|e| view! {
+                                <Alert variant=AlertVariant::Destructive>
+                                    <span>"Failed to load: " {e}</span>
+                                </Alert>
+                            })}
+                            <form on:submit=on_submit class="space-y-4">
+                                {move || error_msg.get().map(|e| view! {
+                                    <Alert variant=AlertVariant::Destructive>
+                                        <span>{e}</span>
+                                    </Alert>
+                                })}
+
+                                {% for attr_name, attr_prop in entity.attributes | items %}
+                                {% if attr_prop.type not in ['relation', 'component'] %}
+                                <div class="space-y-1">
+                                    <Label html_for="{{ attr_name | snake_case }}_edit">"{{ attr_name | pascal_case }}"</Label>
+                                    {% if attr_prop.type == 'text' %}
+                                    <textarea
+                                        id="{{ attr_name | snake_case }}_edit"
+                                        class="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                        placeholder="{{ attr_name | pascal_case }}"
+                                        prop:value=move || {{ attr_name | snake_case }}_val.get()
+                                        on:input=move |ev| {{ attr_name | snake_case }}_val.set(event_target_value(&ev))
+                                    />
+                                    {% elif attr_prop.type == 'boolean' %}
+                                    <div class="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            id="{{ attr_name | snake_case }}_edit"
+                                            class="h-4 w-4 rounded border-gray-300"
+                                            prop:checked=move || {{ attr_name | snake_case }}_val.get() == "true"
+                                            on:change=move |ev| {
+                                                let checked = event_target_checked(&ev);
+                                                {{ attr_name | snake_case }}_val.set(checked.to_string())
+                                            }
+                                        />
+                                        <span class="text-sm text-gray-600">"{{ attr_name | pascal_case }}"</span>
+                                    </div>
+                                    {% elif attr_prop.enum %}
+                                    <select
+                                        id="{{ attr_name | snake_case }}_edit"
+                                        class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                        prop:value=move || {{ attr_name | snake_case }}_val.get()
+                                        on:change=move |ev| {{ attr_name | snake_case }}_val.set(event_target_value(&ev))
+                                    >
+                                        <option value="">"Select…"</option>
+                                        {% for choice in attr_prop.enum %}
+                                        <option value="{{ choice }}">"{{ choice | pascal_case }}"</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% else %}
+                                    <Input
+                                        id="{{ attr_name | snake_case }}_edit"
+                                        {% if attr_prop.format == 'email' %}
+                                        input_type="email"
+                                        {% elif attr_prop.format == 'url' or attr_prop.format == 'uri' %}
+                                        input_type="url"
+                                        {% elif attr_prop.type == 'integer' or attr_prop.type == 'number' %}
+                                        input_type="number"
+                                        {% else %}
+                                        input_type="text"
+                                        {% endif %}
+                                        placeholder="{{ attr_name | pascal_case }}"
+                                        prop:value=move || {{ attr_name | snake_case }}_val.get()
+                                        on:input=move |ev| {{ attr_name | snake_case }}_val.set(event_target_value(&ev))
+                                    />
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                                {% endfor %}
+
+                                <CardFooter class="px-0 pt-4 flex gap-2">
+                                    <Button
+                                        variant=ButtonVariant::Outline
+                                        button_type="button"
+                                        on:click=move |_| set_view.set(View::{{ entity_name | pascal_case }}List)
+                                    >
+                                        "Cancel"
+                                    </Button>
+                                    <Button
+                                        button_type="submit"
+                                        disabled=Signal::derive(move || submitting.get())
+                                    >
+                                        {move || if submitting.get() { "Saving…" } else { "Save Changes" }}
+                                    </Button>
+                                </CardFooter>
+                            </form>
+                        </CardContent>
+                    </Card>
+                }
+            })}
+        </Suspense>
+    }
+}

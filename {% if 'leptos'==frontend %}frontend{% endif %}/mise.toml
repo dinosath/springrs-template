@@ -1,0 +1,12 @@
+[tools]
+"cargo:trunk" = "latest"
+"cargo:wasm-bindgen-cli" = "latest"
+node = "22"
+
+[tasks.default]
+description = "Build Leptos frontend for production"
+run = ["npm install", "trunk build --release"]
+
+[tasks.dev]
+description = "Start Leptos dev server with hot reload"
+run = ["npm install", "trunk serve --open"]

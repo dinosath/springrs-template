@@ -20,7 +20,8 @@ use summer::{app::AppBuilder, plugin::Plugin};
 use webgates::codecs::jwt::{JsonWebToken, JsonWebTokenOptions, JwtClaims};
 use webgates::codecs::Codec;
 use webgates::prelude::{Account, Group, Role};
-use webgates_repositories::memory::{MemoryAccountRepository, MemorySecretRepository};
+use webgates_repositories::memory::account::MemoryAccountRepository;
+use webgates_repositories::memory::secret::MemorySecretRepository;
 
 // ─── Type aliases ─────────────────────────────────────────────────────────────
 
@@ -126,11 +127,11 @@ impl Plugin for AuthPlugin {
             .unwrap_or_else(|_| "change-me-in-production-needs-32-chars!".to_string());
 
         let enc_key =
-            webgates::jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes());
+            webgates::codecs::jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes());
         let dec_key =
-            webgates::jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes());
+            webgates::codecs::jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes());
 
-        let mut validation = webgates::jsonwebtoken::Validation::default();
+        let mut validation = webgates::codecs::jsonwebtoken::Validation::default();
         validation.validate_exp = true;
 
         let jwt_options = JsonWebTokenOptions {

@@ -1,0 +1,31 @@
+use serde_json::Value;
+use crate::types::{EntityRow, parse_list};
+use super::client;
+
+const BASE: &str = "/api/{{ entity.info.pluralName | kebab_case }}";
+
+/// List all {{ entity_name | pascal_case }} records.
+pub async fn list() -> Result<Vec<EntityRow>, String> {
+    let value: Value = client::get(BASE).await?;
+    Ok(parse_list(value))
+}
+
+/// Get a single {{ entity_name | pascal_case }} by id.
+pub async fn get_by_id(id: i64) -> Result<EntityRow, String> {
+    client::get(&format!("{}/{}", BASE, id)).await
+}
+
+/// Create a new {{ entity_name | pascal_case }}.
+pub async fn create(body: &Value) -> Result<EntityRow, String> {
+    client::post(BASE, body).await
+}
+
+/// Update an existing {{ entity_name | pascal_case }}.
+pub async fn update(id: i64, body: &Value) -> Result<EntityRow, String> {
+    client::put(&format!("{}/{}", BASE, id), body).await
+}
+
+/// Delete a {{ entity_name | pascal_case }}.
+pub async fn delete(id: i64) -> Result<(), String> {
+    client::delete(&format!("{}/{}", BASE, id)).await
+}

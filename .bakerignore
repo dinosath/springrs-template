@@ -10,3 +10,5 @@ sample
 generated
 generated/**
 mise.toml
+samples
+samples/**

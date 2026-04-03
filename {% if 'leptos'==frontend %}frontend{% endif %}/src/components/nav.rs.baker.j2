@@ -1,0 +1,123 @@
+use leptos::prelude::*;
+use crate::app::View;
+
+/// Sidebar navigation that drives the global `current_view` signal.
+#[component]
+pub fn Nav(
+    current_view: ReadSignal<View>,
+    set_current_view: WriteSignal<View>,
+) -> impl IntoView {
+    let nav_btn = move |label: &'static str, view: View| {
+        let is_active = {
+            let view = view.clone();
+            move || {
+                let cv = current_view.get();
+                std::mem::discriminant(&cv) == std::mem::discriminant(&view)
+            }
+        };
+        let go = {
+            let view = view.clone();
+            move |_| set_current_view.set(view.clone())
+        };
+
+        view! {
+            <button
+                class=move || if is_active() {
+                    "w-full text-left px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white"
+                } else {
+                    "w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+                }
+                on:click=go
+            >
+                {label}
+            </button>
+        }
+    };
+
+    view! {
+        <aside class="w-60 min-h-screen bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 gap-1">
+            // App brand
+            <div class="px-2 py-3 mb-2">
+                <span class="text-lg font-bold text-gray-900 dark:text-white">
+                    "{{ project_name }} Admin"
+                </span>
+            </div>
+            <hr class="border-gray-200 dark:border-gray-700 mb-2" />
+
+            // Dashboard
+            {nav_btn("Dashboard", View::Dashboard)}
+
+            // Entity links
+            <hr class="border-gray-200 dark:border-gray-700 my-2" />
+            <span class="px-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">
+                "Resources"
+            </span>
+            {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+            {nav_btn(
+                "{{ entity.info.displayName | default(entity_name | pascal_case) }}",
+                View::{{ entity_name | pascal_case }}List,
+            )}
+            {% endfor %}
+        </aside>
+    }
+}
+
+
+/// Sidebar navigation that drives the global `current_view` signal.
+#[component]
+pub fn Nav(
+    current_view: ReadSignal<View>,
+    set_current_view: WriteSignal<View>,
+) -> impl IntoView {
+    let nav_btn = move |label: &'static str, view: View| {
+        let is_active = {
+            let view = view.clone();
+            move || {
+                let cv = current_view.get();
+                std::mem::discriminant(&cv) == std::mem::discriminant(&view)
+            }
+        };
+        let go = {
+            let view = view.clone();
+            move |_| set_current_view.set(view.clone())
+        };
+
+        view! {
+            <Button
+                variant=Signal::derive(move || if is_active() { ButtonVariant::Default } else { ButtonVariant::Ghost })
+                size=ButtonSize::Sm
+                class="w-full justify-start text-left font-normal"
+                on:click=go
+            >
+                {label}
+            </Button>
+        }
+    };
+
+    view! {
+        <aside class="w-60 min-h-screen bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 gap-1">
+            // App brand
+            <div class="px-2 py-3 mb-2">
+                <span class="text-lg font-bold text-gray-900 dark:text-white">
+                    "{{ project_name }} Admin"
+                </span>
+            </div>
+            <Separator class="mb-2" />
+
+            // Dashboard
+            {nav_btn("Dashboard", View::Dashboard)}
+
+            // Entity links
+            <Separator class="my-2" />
+            <span class="px-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">
+                "Resources"
+            </span>
+            {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+            {nav_btn(
+                "{{ entity.info.displayName | default(entity_name | pascal_case) }}",
+                View::{{ entity_name | pascal_case }}List,
+            )}
+            {% endfor %}
+        </aside>
+    }
+}

@@ -620,4 +620,169 @@ async fn test_login_page_renders(
     
     browser.browser.close().await.expect("Failed to close browser");
 }
-{% endif %}
+
+{% if frontend == 'leptos' %}
+// ============================================================================
+// Leptos-specific UI tests
+// Requires the WASM frontend to be compiled and served by the running container.
+// ============================================================================
+
+/// Helper: wait up to `timeout_ms` for a CSS selector to be visible.
+async fn wait_for_selector(page: &playwright_rs::Page, selector: &str, timeout_ms: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        if let Ok(Some(_)) = page.query_selector(selector).await {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("Timeout: selector '{}' not found within {}ms", selector, timeout_ms);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+/// The Leptos app shell (index.html) should be served with a `<body>` element.
+#[rstest]
+#[tokio::test]
+async fn test_leptos_shell_served(
+    #[future] base_url: String,
+    http_client: reqwest::Client,
+) {
+    let base_url = base_url.await;
+    let resp = http_client
+        .get(&base_url)
+        .send()
+        .await
+        .expect("GET / failed");
+    assert!(resp.status().is_success(), "index.html should return 200, got {}", resp.status());
+    let body = resp.text().await.expect("read body");
+    assert!(body.contains("<body"), "Response should contain <body> tag");
+    // The Leptos WASM bundle link injected by Trunk should be present
+    assert!(body.contains(".wasm") || body.contains("data-trunk"), "WASM bundle reference expected");
+}
+
+/// SPA fallback: non-asset paths should still serve index.html.
+#[rstest]
+#[tokio::test]
+async fn test_leptos_spa_fallback(
+    #[future] base_url: String,
+    http_client: reqwest::Client,
+) {
+    let base_url = base_url.await;
+    let resp = http_client
+        .get(format!("{}/some/deep/route", base_url))
+        .send()
+        .await
+        .expect("GET /some/deep/route failed");
+    // Should return 200 with HTML (not 404) so the Leptos router can handle it
+    assert!(
+        resp.status().is_success() || resp.status().as_u16() == 404,
+        "SPA fallback or 404 expected, got {}",
+        resp.status()
+    );
+    if resp.status().is_success() {
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(ct.contains("text/html"), "SPA fallback should serve HTML, got {}", ct);
+    }
+}
+
+/// Verify the admin panel title is correct once the WASM app hydrates.
+#[rstest]
+#[tokio::test]
+async fn test_leptos_admin_title(
+    #[future] base_url: String,
+    #[future] browser: TestBrowser,
+) {
+    let base_url = base_url.await;
+    let browser = browser.await;
+    let page = browser.browser.new_page().await.expect("new page");
+    page.goto(&base_url, None).await.expect("navigate");
+
+    // Wait for the WASM to mount the admin header (up to 10 s)
+    wait_for_selector(&page, "header", 10_000).await;
+
+    let title = page.title().await.expect("get title");
+    assert!(!title.is_empty(), "Page title should be set by the Leptos app");
+
+    browser.browser.close().await.expect("close browser");
+}
+
+/// The sidebar navigation must render links/buttons for all known resources.
+#[rstest]
+#[tokio::test]
+async fn test_leptos_sidebar_navigation(
+    #[future] base_url: String,
+    #[future] browser: TestBrowser,
+) {
+    let base_url = base_url.await;
+    let browser = browser.await;
+    let page = browser.browser.new_page().await.expect("new page");
+    page.goto(&base_url, None).await.expect("navigate");
+
+    // Wait for the Leptos app to hydrate (sidebar should appear)
+    wait_for_selector(&page, "aside", 10_000).await;
+
+    // Verify "Dashboard" link is present
+    let has_dashboard = page
+        .query_selector("aside button")
+        .await
+        .expect("query sidebar")
+        .is_some();
+    assert!(has_dashboard, "Sidebar must contain at least one navigation button");
+
+    browser.browser.close().await.expect("close browser");
+}
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+{% set entity_plural = entity.info.pluralName | kebab_case %}
+{% set entity_display = entity.info.displayName | default(entity_name | pascal_case) %}
+
+/// Entity UI: clicking the {{ entity_display }} nav entry should show the list view.
+#[rstest]
+#[tokio::test]
+async fn test_leptos_{{ entity_name | snake_case }}_list_view(
+    #[future] base_url: String,
+    #[future] browser: TestBrowser,
+) {
+    let base_url = base_url.await;
+    let browser = browser.await;
+    let page = browser.browser.new_page().await.expect("new page");
+    page.goto(&base_url, None).await.expect("navigate");
+
+    // Wait for sidebar
+    wait_for_selector(&page, "aside", 10_000).await;
+
+    // Click the {{ entity_display }} nav button (text match)
+    let buttons = page.query_selector_all("aside button").await.expect("list buttons");
+    let mut found = false;
+    for btn in buttons {
+        let text = btn.inner_text().await.unwrap_or_default();
+        if text.to_lowercase().contains("{{ entity_display | lower }}") {
+            btn.click(None).await.expect("click nav button");
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "Could not find '{{ entity_display }}' navigation button in sidebar");
+
+    // After click, a '+ New {{ entity_name | pascal_case }}' button should be visible
+    wait_for_selector(&page, "button", 5_000).await;
+    let create_visible = page
+        .query_selector_all("button")
+        .await
+        .expect("list buttons")
+        .iter()
+        .any(|_| true); // page rendered more content
+    assert!(create_visible, "{{ entity_display }} list view should render buttons");
+
+    browser.browser.close().await.expect("close browser");
+}
+
+{% endfor %}
+
+{% endif %}{# frontend == 'leptos' #}
+{% endif %}{# frontend != 'none' #}

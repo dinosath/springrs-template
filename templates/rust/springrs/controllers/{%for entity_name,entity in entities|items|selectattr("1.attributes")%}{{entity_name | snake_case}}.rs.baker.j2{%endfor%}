@@ -7,10 +7,11 @@ use summer_web::{
     extractor::{Path, Component, Json},
     axum::{http::{HeaderMap, HeaderValue, StatusCode}, response::IntoResponse},
 };
-use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait};
+use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait, TransactionTrait, ColumnTrait, QueryFilter};
 use summer_sea_orm::DbConn;
 use summer::tracing::debug;
-use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, {{model}}Create,{{model}}Update,{{model}}Response};
+use serde::{Deserialize, Serialize};
+use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create,{{model}}Update,{{model}}Response};
 {% if authentication == 'jwt' -%}
 use crate::services::auth_plugin::AuthUser;
 {% endif -%}
@@ -98,4 +99,61 @@ pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>{% if
     debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{model}}Response = model.into();
     Ok(Json(resp))
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct {{model}}BatchUpdateItem {
+    pub id: i32,
+    #[serde(flatten)]
+    pub data: {{model}}Update,
+}
+
+#[post("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
+pub async fn batch_create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(items): Json<Vec<{{model}}Create>>) -> Result<impl IntoResponse> {
+    debug!("Batch creating {} {{ entity.info.pluralName | kebab_case }}", items.len());
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let mut responses = Vec::with_capacity(items.len());
+    for item in items {
+        let active_model = item.into_active_model();
+        let model = active_model.insert(&txn).await
+            .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
+        responses.push({{model}}Response::from(model));
+    }
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    debug!("Batch created {} {{ entity.info.pluralName | kebab_case }}", responses.len());
+    Ok((StatusCode::CREATED, Json(responses)))
+}
+
+#[put("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
+pub async fn batch_update(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(items): Json<Vec<{{model}}BatchUpdateItem>>) -> Result<impl IntoResponse> {
+    debug!("Batch updating {} {{ entity.info.pluralName | kebab_case }}", items.len());
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let mut responses = Vec::with_capacity(items.len());
+    for item in items {
+        let _ = load_item(&txn, item.id).await?;
+        let mut active_model = item.data.into_active_model();
+        active_model.id = Set(item.id);
+        let model = active_model.update(&txn).await
+            .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
+        responses.push({{model}}Response::from(model));
+    }
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    debug!("Batch updated {} {{ entity.info.pluralName | kebab_case }}", responses.len());
+    Ok(Json(responses))
+}
+
+#[delete("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
+pub async fn batch_delete(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(ids): Json<Vec<i32>>) -> Result<impl IntoResponse> {
+    debug!("Batch deleting {} {{ entity.info.pluralName | kebab_case }}", ids.len());
+    Entity::delete_many()
+        .filter(Column::Id.is_in(ids))
+        .exec(&db)
+        .await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    debug!("Batch delete completed for {{ entity.info.pluralName | kebab_case }}");
+    Ok(StatusCode::NO_CONTENT)
 }

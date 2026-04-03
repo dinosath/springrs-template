@@ -7,11 +7,11 @@ rust = "latest"
 "cargo:cargo-deny" = "latest"
 {{'protoc = "latest"' if 'grpc' in protocols }}
 {{'helm = "latest"' if  "helm" in features }}
+{{'node = "22"' if frontend == 'leptos' }}
+{%- if frontend == 'leptos' %}
+"cargo:trunk" = "latest"
+{%- endif %}
 jq = "latest"
-
-[env]
-TEMPLATE = 'axum-template'
-_.file = '.env'
 
 [tasks.merge-entities]
 description = "Merge all entity JSON files into answers.json"
@@ -23,17 +23,39 @@ jq --argjson entities "$entities_json" '.entities = $entities' answers.json > tm
 
 [tasks.generate-local]
 description = "Generate the project files from local repo"
-run = "baker ../$TEMPLATE . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+run = "baker generate ../springrs-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all --verbose"
 sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
 [tasks.generate]
 description = "Generate the project files"
-run = "baker https://github.com/dinosath/$TEMPLATE . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+run = "baker generate https://github.com/dinosath/springrs-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all --verbose"
 sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
-{% if frontend != "none" %}
+[tasks.baker-update]
+description = "Update the project files from generated repo"
+run = "baker update --non-interactive --skip-confirms all --verbose"
+sources = ['.baker/**/*.json']
+
+{% if frontend == 'leptos' %}
+[tasks.frontend-install]
+description = "Install Leptos frontend npm dependencies"
+dir = "frontend"
+run = "npm install"
+
+[tasks.frontend-build]
+description = "Build Leptos frontend with Trunk"
+dir = "frontend"
+run = "trunk build --release"
+depends = ["frontend-install"]
+
+[tasks.frontend-dev]
+description = "Run Leptos frontend dev server"
+dir = "frontend"
+run = "trunk serve --open"
+depends = ["frontend-install"]
+{% elif frontend != "none" %}
 [tasks.frontend-dev]
 description = "Run frontend dev server"
 dir = "frontend"

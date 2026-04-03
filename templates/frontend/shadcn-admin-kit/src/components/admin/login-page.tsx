@@ -85,14 +85,14 @@ export const LoginPage = (props: { redirectTo?: string }) => {
             <div className="flex flex-col space-y-2 text-center">
               <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
               <p className="text-sm leading-none text-muted-foreground">
-                Try janedoe@acme.com / password
+                Try admin / admin
               </p>
             </div>
             <Form className="space-y-8" onSubmit={handleSubmit}>
               <TextInput
-                label="Email"
-                source="email"
-                type="email"
+                label="Username"
+                source="username"
+                type="text"
                 validate={required()}
               />
               <TextInput

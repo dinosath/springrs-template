@@ -596,4 +596,23 @@ mod tests {
         let response = server.get("/api/health").await;
         assert!(response.status_code().is_success());
     }
+
+{% if frontend != 'none' -%}
+    #[tokio::test]
+    async fn test_frontend_html() {
+        let server = init_test_server().await;
+        let response = server.get("/").await;
+        assert!(
+            response.status_code().is_success(),
+            "GET / failed: status={}",
+            response.status_code()
+        );
+        let body = response.text();
+        assert!(
+            body.contains("<html") || body.contains("<!DOCTYPE html") || body.contains("<!doctype html"),
+            "Expected HTML response from /, got: {}",
+            &body[..body.len().min(200)]
+        );
+    }
+{% endif -%}
 }

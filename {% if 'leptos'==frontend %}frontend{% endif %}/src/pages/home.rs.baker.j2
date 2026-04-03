@@ -1,0 +1,50 @@
+use leptos::prelude::*;
+
+/// Dashboard home page – shows a summary card for every entity.
+#[component]
+pub fn Home() -> impl IntoView {
+    view! {
+        <div class="space-y-6">
+            <p class="text-gray-600 dark:text-gray-400 text-sm">
+                "Welcome to the {{ project_name }} admin panel. Use the sidebar to manage resources."
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow">
+                    <h3 class="font-semibold text-gray-900 dark:text-white">
+                        "{{ entity.info.displayName | default(entity_name | pascal_case) }}"
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        "{{ entity.info.description | default('Manage ' ~ entity_name | plural | lower) }}"
+                    </p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    }
+}
+
+#[component]
+pub fn Home() -> impl IntoView {
+    view! {
+        <div class="space-y-6">
+            <p class="text-gray-600 dark:text-gray-400 text-sm">
+                "Welcome to the {{ project_name }} admin panel. Use the sidebar to manage resources."
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {% for entity_name, entity in entities | items | selectattr("1.attributes") %}
+                <Card class="hover:shadow-md transition-shadow">
+                    <CardHeader>
+                        <CardTitle>"{{ entity.info.displayName | default(entity_name | pascal_case) }}"</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p class="text-sm text-gray-500">
+                            "{{ entity.info.description | default('Manage ' ~ entity_name | plural | lower) }}"
+                        </p>
+                    </CardContent>
+                </Card>
+                {% endfor %}
+            </div>
+        </div>
+    }
+}

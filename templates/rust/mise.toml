@@ -10,7 +10,7 @@ run = "baker . ./generated/$ANSWER --answers-file samples/answers-$ANSWER.json -
 
 [tasks.e2e]
 description = "Run e2e tests"
-run = "(cd generated/$ANSWER && mise trust && mise run build-and-test)"
+run = "(cd generated/$ANSWER && mise run build-and-test)"
 
 [tasks.rest]
 description = "Generate and build rest sample"
@@ -28,6 +28,11 @@ description = "Generate and build rest-shadcn sample"
 env.ANSWER = "rest-shadcn"
 run = [{ task = "generate"},{ task = "e2e" }]
 
+[tasks.rest-leptos]
+description = "Generate and build rest-leptos sample (Leptos WASM frontend)"
+env.ANSWER = "rest-leptos"
+run = [{ task = "generate"},{ task = "e2e" }]
+
 [tasks.grpc]
 description = "Generate and build grpc sample"
 env.ANSWER = "grpc"
@@ -35,4 +40,4 @@ run = [{ task = "generate"},{ task = "e2e" }]
 
 [tasks.all]
 description = "Generate and build all samples"
-depends = ["rest", "rest-jwt", "rest-shadcn", "grpc"]
+depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc"]

@@ -1,0 +1,98 @@
+use gloo_net::http::Request;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+{% if authentication == 'jwt' %}
+/// Retrieve the JWT access token stored in `localStorage`.
+pub fn get_auth_token() -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|ls| ls.get_item("auth_token").ok().flatten())
+}
+
+/// Persist the JWT access token into `localStorage`.
+pub fn set_auth_token(token: &str) {
+    if let Some(ls) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    {
+        let _ = ls.set_item("auth_token", token);
+    }
+}
+
+/// Remove the JWT token from `localStorage` (logout).
+pub fn clear_auth_token() {
+    if let Some(ls) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    {
+        let _ = ls.remove_item("auth_token");
+    }
+}
+
+fn apply_auth(req: Request) -> Request {
+    if let Some(token) = get_auth_token() {
+        req.header("Authorization", &format!("Bearer {}", token))
+    } else {
+        req
+    }
+}
+{% else %}
+fn apply_auth(req: Request) -> Request {
+    req
+}
+{% endif %}
+
+/// Perform a GET request and deserialise the JSON body.
+pub async fn get<T: DeserializeOwned>(path: &str) -> Result<T, String> {
+    let req = apply_auth(Request::get(path));
+    let resp = req.send().await.map_err(|e| format!("GET {path} failed: {e}"))?;
+    if resp.ok() {
+        resp.json::<T>().await.map_err(|e| format!("parse GET {path}: {e}"))
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("GET {path} returned HTTP {status}: {text}"))
+    }
+}
+
+/// Perform a POST request with a JSON body and deserialise the JSON response.
+pub async fn post<B: Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Result<T, String> {
+    let req = apply_auth(Request::post(path))
+        .json(body)
+        .map_err(|e| format!("serialise POST {path}: {e}"))?;
+    let resp = req.send().await.map_err(|e| format!("POST {path} failed: {e}"))?;
+    if resp.ok() {
+        resp.json::<T>().await.map_err(|e| format!("parse POST {path}: {e}"))
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("POST {path} returned HTTP {status}: {text}"))
+    }
+}
+
+/// Perform a PUT request with a JSON body and deserialise the JSON response.
+pub async fn put<B: Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Result<T, String> {
+    let req = apply_auth(Request::put(path))
+        .json(body)
+        .map_err(|e| format!("serialise PUT {path}: {e}"))?;
+    let resp = req.send().await.map_err(|e| format!("PUT {path} failed: {e}"))?;
+    if resp.ok() {
+        resp.json::<T>().await.map_err(|e| format!("parse PUT {path}: {e}"))
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("PUT {path} returned HTTP {status}: {text}"))
+    }
+}
+
+/// Perform a DELETE request (no response body expected).
+pub async fn delete(path: &str) -> Result<(), String> {
+    let req = apply_auth(Request::delete(path));
+    let resp = req.send().await.map_err(|e| format!("DELETE {path} failed: {e}"))?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("DELETE {path} returned HTTP {status}: {text}"))
+    }
+}
