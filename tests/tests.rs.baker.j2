@@ -1,3 +1,24 @@
+{# Always include shared test infrastructure (server init, auth, health check) #}
+{% include "rust/test_infrastructure.jinja" %}
+
 {% if 'rest' in protocols -%}
 {% include "rust/unified_e2e_tests.jinja" %}
+{%- endif %}
+
+{% if 'activitypub' in protocols -%}
+{% include "rust/activitypub_tests.jinja" %}
+{%- endif %}
+
+{% if 'grpc' in protocols -%}
+{% include "rust/grpc_tests.jinja" %}
+{%- endif %}
+
+{% if 'graphql' in protocols -%}
+{% include "rust/graphql_tests.jinja" %}
+{%- endif %}
+
+{# Mixed-protocol tests: rendered when at least two of rest/grpc/activitypub are active #}
+{% set active_count = ('rest' in protocols) | int + ('grpc' in protocols) | int + ('activitypub' in protocols) | int -%}
+{% if active_count >= 2 -%}
+{% include "rust/mixed_protocol_tests.jinja" %}
 {%- endif %}

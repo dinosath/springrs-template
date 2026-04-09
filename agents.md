@@ -9,7 +9,7 @@ For agents working on a generated project, see the `agents.md` rendered inside t
 
 `springrs-template` is a [baker](https://github.com/aliev/baker) code-generation template that
 scaffolds production-ready Rust backend services (using the **summer** / spring-rs framework,
-SeaORM, axum, optional gRPC, Helm, and frontend kits) from a single JSON answers file.
+SeaORM, axum, optional gRPC, ActivityPub, GraphQL, Helm, and frontend kits) from a single JSON answers file.
 
 ---
 
@@ -31,6 +31,8 @@ springrs-template/
 ├── src/                         # Source templates rendered into the generated project
 │   ├── main.rs.baker.j2
 │   ├── controllers/             # Conditional: only rendered when 'rest' in protocols
+│   ├── activitypub/             # Conditional: only rendered when 'activitypub' in protocols
+│   ├── graphql/                 # Conditional: only rendered when 'graphql' in protocols
 │   ├── models/                  # Conditional: only rendered when database=='postgres'
 │   └── services/
 │       └── seaorm_migration_plugin.rs.baker.j2
@@ -62,13 +64,17 @@ springrs-template/
 │   ├── answers-rest.json
 │   ├── answers-rest-jwt.json
 │   ├── answers-rest-shadcn.json
-│   └── answers-grpc.json
+│   ├── answers-grpc.json
+│   ├── answers-all-protocols.json
+│   └── answers-mixed-protocols.json
 │
 └── generated/                   # Output directory written by the test tasks (git-ignored)
     ├── rest/
     ├── rest-jwt/
     ├── rest-shadcn/
-    └── grpc/
+    ├── grpc/
+    ├── all-protocols/
+    └── mixed-protocols/
 ```
 
 ---
@@ -97,6 +103,8 @@ how entire sub-trees are included or excluded based on answers:
 | `{% if use_seaorm_migrations %}migration{% endif %}/` | use_seaorm_migrations is true | `migration/` dir is included |
 | `{% if 'shadcn-admin-kit'==frontend %}frontend{% endif %}/` | frontend is shadcn-admin-kit | `frontend/` dir is included |
 | `{%if 'rest' in protocols%}controllers{% endif %}/` | protocols contains rest | `controllers/` dir is included |
+| `{%if 'activitypub' in protocols%}activitypub{% endif %}/` | protocols contains activitypub | `activitypub/` dir is included |
+| `{%if 'graphql' in protocols%}graphql{% endif %}/` | protocols contains graphql | `graphql/` dir is included |
 | `{%if database=='postgres'%}models{% endif %}/` | database is postgres | `models/` dir is included |
 
 If an expression evaluates to an empty string the path segment (and its whole sub-tree) is
@@ -119,7 +127,7 @@ Use this to verify that template changes produce a project that actually compile
 # Install baker and other tools declared in mise.toml
 mise install
 
-# Run all four sample variants (rest, rest-jwt, rest-shadcn, grpc)
+# Run all sample variants (rest, rest-jwt, rest-shadcn, grpc, all-protocols, mixed-protocols)
 mise run all
 
 # Or run a single variant
@@ -127,6 +135,8 @@ mise run rest
 mise run rest-jwt
 mise run rest-shadcn
 mise run grpc
+mise run all-protocols
+mise run mixed-protocols
 ```
 
 Each task does two things:
@@ -157,3 +167,17 @@ A variant passes only when the generated project both compiles cleanly and passe
   manually or committed.
 - **One template per concern** — follow the existing pattern of one `.baker.j2` file per entity
   type / output file type rather than merging unrelated concerns.
+- **Per-entity protocol overrides** — entities may include an optional `protocols` array to
+  restrict which protocols are generated for that entity. When absent, the global `protocols`
+  setting applies. Use `macros.entity_has_protocol(entity, 'rest', protocols)` in templates.
+
+---
+
+## Protocol support
+
+| Protocol | Directory | Dependencies | Description |
+|---|---|---|---|
+| `rest` | `src/controllers/` | `summer-web` | Axum REST CRUD endpoints |
+| `grpc` | `proto/` | `summer-grpc`, `tonic` | gRPC services from proto schema |
+| `activitypub` | `src/activitypub/` | `summer-web` | ActivityPub federation endpoints (object, inbox, outbox, collections) |
+| `graphql` | `src/graphql/` | `async-graphql`, `async-graphql-axum` | GraphQL queries & mutations with playground |

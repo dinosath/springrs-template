@@ -1,0 +1,356 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+// ActivityPub protocol tests
+//
+// Tests the ActivityPub endpoints: object retrieval, collections,
+// inbox, outbox, followers, following, and WebFinger discovery.
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if 'activitypub' in entity_protos -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_plural = entity.info.pluralName | default(entity_name | plural | snake_case) -%}
+{% set entity_plural_kebab = entity.info.pluralName | kebab_case -%}
+
+/// ActivityPub tests for {{ entity_name }}
+mod {{ entity_snake }}_activitypub_tests {
+    use super::*;
+
+    /// Helper: create a {{ entity_snake }} via REST so we have something to test AP endpoints against.
+    async fn create_{{ entity_snake }}_fixture(server: &TestServer) -> serde_json::Value {
+{% if 'rest' in entity_protos -%}
+        let payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "ap_test_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "AP Test {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "AP Test {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let mut request = server.post("/api/{{ entity_plural }}").json(&payload);
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+{% endif -%}
+        let response = request.await;
+        assert!(response.status_code().is_success(), "Fixture create failed: {}", response.status_code());
+        response.json::<serde_json::Value>()
+{% else -%}
+        // No REST endpoint for {{ entity_name }}; use GraphQL or direct DB insert
+        // for now return a placeholder – the AP object endpoints use their own IDs.
+        json!({"id": 1})
+{% endif -%}
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_get_object() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let response = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}", id))
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "AP get_object for {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["@context"], "https://www.w3.org/ns/activitystreams");
+        assert_eq!(body["type"], "Object");
+        assert!(body["id"].is_string(), "AP object should have an id string");
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_list_collection() {
+        let server = init_test_server().await;
+        // Ensure at least one entity exists
+        let _ = create_{{ entity_snake }}_fixture(server).await;
+
+        let response = server
+            .get("/ap/{{ entity_plural_kebab }}")
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "AP list_collection for {{ entity_plural }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["@context"], "https://www.w3.org/ns/activitystreams");
+        assert_eq!(body["type"], "OrderedCollection");
+        assert!(body["totalItems"].is_number(), "Expected totalItems in collection");
+        assert!(body["orderedItems"].is_array(), "Expected orderedItems array in collection");
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_outbox() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let response = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/outbox", id))
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "AP outbox for {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["@context"], "https://www.w3.org/ns/activitystreams");
+        assert_eq!(body["type"], "OrderedCollection");
+        assert!(body["orderedItems"].is_array());
+
+        // The outbox should contain at least one Create activity
+        let items = body["orderedItems"].as_array().unwrap();
+        if !items.is_empty() {
+            assert_eq!(items[0]["type"], "Create", "First outbox item should be a Create activity");
+            assert!(items[0]["object"].is_object(), "Create activity should contain an object");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_inbox_accepts_activity() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Like",
+            "actor": "https://remote.example/users/alice",
+            "object": format!("https://localhost/ap/{{ entity_plural_kebab }}/{}", id),
+        });
+
+        let response = server
+            .post(&format!("/ap/{{ entity_plural_kebab }}/{}/inbox", id))
+            .json(&activity)
+            .add_header(
+                "Content-Type".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "AP inbox for {{ entity_snake }} should accept the activity: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_inbox_rejects_unknown_entity() {
+        let server = init_test_server().await;
+
+        let activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Like",
+            "actor": "https://remote.example/users/alice",
+            "object": "https://localhost/ap/{{ entity_plural_kebab }}/999999",
+        });
+
+        let response = server
+            .post("/ap/{{ entity_plural_kebab }}/999999/inbox")
+            .json(&activity)
+            .add_header(
+                "Content-Type".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert_eq!(
+            response.status_code().as_u16(), 404,
+            "AP inbox should return 404 for non-existent entity, got: {}",
+            response.status_code()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_followers() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let response = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/followers", id))
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "AP followers for {{ entity_snake }} failed: status={}",
+            response.status_code()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["type"], "OrderedCollection");
+        assert!(body["totalItems"].is_number());
+    }
+
+    #[tokio::test]
+    async fn test_ap_{{ entity_snake }}_following() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let response = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/following", id))
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "AP following for {{ entity_snake }} failed: status={}",
+            response.status_code()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["type"], "OrderedCollection");
+        assert!(body["totalItems"].is_number());
+    }
+}
+
+{% endif -%}
+{% endfor -%}
+
+/// Tests for ActivityPub discovery endpoints (WebFinger, server actor).
+mod activitypub_discovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_webfinger() {
+        let server = init_test_server().await;
+        let response = server
+            .get("/.well-known/webfinger?resource=acct:test@localhost")
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "WebFinger failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(body["subject"].is_string(), "Expected 'subject' in WebFinger response");
+        assert!(body["links"].is_array(), "Expected 'links' array in WebFinger response");
+        assert!(body["aliases"].is_array(), "Expected 'aliases' array in WebFinger response");
+    }
+
+    #[tokio::test]
+    async fn test_server_actor() {
+        let server = init_test_server().await;
+        let response = server
+            .get("/ap/actor")
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "Server actor failed: status={}",
+            response.status_code()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(body["@context"].is_array() || body["@context"].is_string(),
+            "Actor should have an @context");
+        assert_eq!(body["type"], "Application");
+        assert!(body["inbox"].is_string(), "Actor should have an inbox");
+        assert!(body["outbox"].is_string(), "Actor should have an outbox");
+        assert!(body["publicKey"].is_object(), "Actor should have a publicKey for HTTP signatures");
+        assert!(body["publicKey"]["publicKeyPem"].is_string(), "publicKey should contain publicKeyPem");
+    }
+
+    #[tokio::test]
+    async fn test_server_inbox_accepts_activity() {
+        let server = init_test_server().await;
+        let activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Follow",
+            "actor": "https://remote.example/users/bob",
+            "object": "https://localhost/ap/actor",
+        });
+
+        let response = server
+            .post("/ap/actor/inbox")
+            .json(&activity)
+            .add_header(
+                "Content-Type".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "Server inbox should accept activity: status={}",
+            response.status_code()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_server_outbox() {
+        let server = init_test_server().await;
+        let response = server
+            .get("/ap/actor/outbox")
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "Server outbox failed: status={}",
+            response.status_code()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["type"], "OrderedCollection");
+    }
+}

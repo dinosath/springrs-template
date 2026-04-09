@@ -1,0 +1,124 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+//! ActivityPub Federation plugin.
+//!
+//! Initialises an [`activitypub_federation::config::FederationConfig`] at
+//! startup and stores it in the module-level [`FEDERATION`] singleton so that
+//! ActivityPub handlers can access it without requiring the
+//! `FederationMiddleware` layer (which would conflict with summer-web routing).
+//!
+//! ## Configuration
+//!
+//! | TOML key               | Env override          | Description                        |
+//! |------------------------|-----------------------|------------------------------------|
+//! | `federation.domain`    | `FEDERATION_DOMAIN`   | Public hostname of this instance   |
+
+use std::sync::{Arc, OnceLock};
+
+use activitypub_federation::{
+    config::FederationConfig,
+    http_signatures::generate_actor_keypair,
+};
+use summer::async_trait;
+use summer::plugin::ComponentRegistry;
+use summer::tracing::info;
+use summer::{app::AppBuilder, plugin::Plugin};
+use summer_sea_orm::{DbConn, SeaOrmPlugin};
+
+// ─── Shared federation data ───────────────────────────────────────────────────
+
+/// Application-wide data available to all ActivityPub [`Object`] and [`Activity`]
+/// trait implementations via [`activitypub_federation::config::Data`].
+#[derive(Clone)]
+pub struct FederationData {
+    /// SeaORM database connection pool.
+    pub db: DbConn,
+    /// Public domain (e.g. `example.com` or `localhost:8080`).
+    pub domain: String,
+}
+
+/// Global singleton set exactly once by [`FederationPlugin::build`].
+pub static FEDERATION: OnceLock<FederationConfig<Arc<FederationData>>> = OnceLock::new();
+
+/// Server-level keypair for signing outgoing HTTP requests.
+#[derive(Debug)]
+pub struct ServerKeypair {
+    pub public_key: String,
+    pub private_key: String,
+}
+
+pub static SERVER_KEYPAIR: OnceLock<ServerKeypair> = OnceLock::new();
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+/// Convenience accessor – panics if the plugin has not been initialised.
+pub fn federation_config() -> &'static FederationConfig<Arc<FederationData>> {
+    FEDERATION
+        .get()
+        .expect("FederationPlugin must be added to the App before handling requests")
+}
+
+/// Convenience accessor to the inner [`FederationData`].
+pub fn federation_data() -> activitypub_federation::config::Data<Arc<FederationData>> {
+    federation_config().to_request_data()
+}
+
+/// Convenience accessor for the server keypair.
+pub fn server_keypair() -> &'static ServerKeypair {
+    SERVER_KEYPAIR
+        .get()
+        .expect("FederationPlugin must be added to the App before handling requests")
+}
+
+// ─── Plugin ───────────────────────────────────────────────────────────────────
+
+pub struct FederationPlugin;
+
+#[async_trait]
+impl Plugin for FederationPlugin {
+    async fn build(&self, app: &mut AppBuilder) {
+        let db = app
+            .get_component::<DbConn>()
+            .expect("DbConn not found – ensure SeaOrmPlugin is loaded before FederationPlugin");
+
+        let domain = std::env::var("FEDERATION_DOMAIN")
+            .unwrap_or_else(|_| "localhost:8080".to_string());
+
+        info!("ActivityPub federation domain: {}", domain);
+
+        let data = Arc::new(FederationData {
+            db,
+            domain: domain.clone(),
+        });
+
+        let config = FederationConfig::builder()
+            .domain(&domain)
+            .app_data(data)
+            .debug(cfg!(debug_assertions))
+            .build()
+            .await
+            .expect("failed to build FederationConfig");
+
+        if FEDERATION.set(config).is_err() {
+            panic!("FederationPlugin initialised twice");
+        }
+
+        // Generate an ephemeral server keypair.
+        // In production this should be loaded from persistent storage to ensure
+        // stable HTTP-signature verification across restarts.
+        let keypair = generate_actor_keypair().expect("failed to generate server keypair");
+        if SERVER_KEYPAIR
+            .set(ServerKeypair {
+                public_key: keypair.public_key,
+                private_key: keypair.private_key,
+            })
+            .is_err()
+        {
+            panic!("ServerKeypair initialised twice");
+        }
+    }
+
+    fn dependencies(&self) -> Vec<&str> {
+        vec![std::any::type_name::<SeaOrmPlugin>()]
+    }
+}

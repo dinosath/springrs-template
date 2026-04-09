@@ -1,0 +1,224 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if 'graphql' in entity_protos -%}
+{% set model = entity_name | pascal_case -%}
+use async_graphql::{Object, InputObject, SimpleObject, Context, Result as GqlResult};
+use sea_orm::{ActiveModelTrait, EntityTrait, Set, IntoActiveModel, ColumnTrait, QueryFilter, ConnectionTrait, TransactionTrait};
+use summer_sea_orm::DbConn;
+use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create, {{model}}Update};
+
+/// GraphQL response type for {{ model }}.
+#[derive(SimpleObject, Clone, Debug)]
+pub struct {{ model }}Gql {
+    pub id: i32,
+    pub created_at: String,
+    pub last_updated: String,
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: Option<i32>,
+    {%- elif property.type == 'boolean' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}bool{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'integer' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'number' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}f64{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'enumeration' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}String{% if not property.required %}>{% endif %},
+    {%- else -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}String{% if not property.required %}>{% endif %},
+    {%- endif -%}
+    {% endfor %}
+}
+
+impl From<Model> for {{ model }}Gql {
+    fn from(model: Model) -> Self {
+        Self {
+            id: model.id,
+            created_at: model.created_at.to_string(),
+            last_updated: model.last_updated.to_string(),
+            {% for name, property in entity.attributes | items -%}
+            {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+            {{ name | snake_case }}_id: {% if property.required %}Some(model.{{ name | snake_case }}_id){% else %}model.{{ name | snake_case }}_id{% endif %},
+            {%- elif property.type == 'enumeration' -%}
+            {{ rust_types.rust_var(name, false) }}: {% if property.required %}format!("{:?}", model.{{ rust_types.rust_var(name, false) }}){% else %}model.{{ rust_types.rust_var(name, false) }}.map(|v| format!("{:?}", v)){% endif %},
+            {%- elif property.type == 'datetime' or (property.type == 'string' and property.format == 'date-time') -%}
+            {{ rust_types.rust_var(name, false) }}: {% if property.required %}model.{{ rust_types.rust_var(name, false) }}.to_string(){% else %}model.{{ rust_types.rust_var(name, false) }}.map(|v| v.to_string()){% endif %},
+            {%- else -%}
+            {{ rust_types.rust_var(name, false) }}: model.{{ rust_types.rust_var(name, false) }},
+            {%- endif -%}
+            {% endfor %}
+        }
+    }
+}
+
+/// GraphQL input for creating a {{ model }}.
+#[derive(InputObject, Clone, Debug)]
+pub struct Create{{ model }}Input {
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'boolean' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}bool{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'integer' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'number' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}f64{% if not property.required %}>{% endif %},
+    {%- elif property.type == 'enumeration' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}String{% if not property.required %}>{% endif %},
+    {%- else -%}
+    pub {{ rust_types.rust_var(name, false) }}: {% if not property.required %}Option<{% endif %}String{% if not property.required %}>{% endif %},
+    {%- endif -%}
+    {% endfor %}
+}
+
+/// GraphQL input for updating a {{ model }}.
+#[derive(InputObject, Clone, Debug)]
+pub struct Update{{ model }}Input {
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: Option<i32>,
+    {%- elif property.type == 'boolean' -%}
+    pub {{ rust_types.rust_var(name, false) }}: Option<bool>,
+    {%- elif property.type == 'integer' -%}
+    pub {{ rust_types.rust_var(name, false) }}: Option<i32>,
+    {%- elif property.type == 'number' -%}
+    pub {{ rust_types.rust_var(name, false) }}: Option<f64>,
+    {%- else -%}
+    pub {{ rust_types.rust_var(name, false) }}: Option<String>,
+    {%- endif -%}
+    {% endfor %}
+}
+
+/// Query resolvers for {{ model }}.
+#[derive(Default)]
+pub struct {{ model }}Query;
+
+#[Object]
+impl {{ model }}Query {
+    /// Get a single {{ model }} by ID.
+    async fn {{ entity_name | snake_case }}(&self, ctx: &Context<'_>, id: i32) -> GqlResult<Option<{{ model }}Gql>> {
+        let db = ctx.data::<DbConn>()?;
+        let model = Entity::find_by_id(id)
+            .one(db)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(model.map(Into::into))
+    }
+
+    /// List all {{ entity.info.pluralName }}.
+    async fn {{ entity.info.pluralName | snake_case }}(&self, ctx: &Context<'_>) -> GqlResult<Vec<{{ model }}Gql>> {
+        let db = ctx.data::<DbConn>()?;
+        let models = Entity::find()
+            .all(db)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+}
+
+/// Mutation resolvers for {{ model }}.
+#[derive(Default)]
+pub struct {{ model }}Mutation;
+
+#[Object]
+impl {{ model }}Mutation {
+    /// Create a new {{ model }}.
+    async fn create_{{ entity_name | snake_case }}(
+        &self,
+        ctx: &Context<'_>,
+        input: Create{{ model }}Input,
+    ) -> GqlResult<{{ model }}Gql> {
+        let db = ctx.data::<DbConn>()?;
+        let create = {{ model }}Create {
+            {% for name, property in entity.attributes | items -%}
+            {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+            {{ name | snake_case }}_id: input.{{ name | snake_case }}_id,
+            {%- elif property.type == 'enumeration' -%}
+            {{ rust_types.rust_var(name, false) }}: Default::default(),
+            {%- elif property.type == 'datetime' or (property.type == 'string' and property.format == 'date-time') -%}
+            {{ rust_types.rust_var(name, false) }}: Default::default(),
+            {%- else -%}
+            {{ rust_types.rust_var(name, false) }}: input.{{ rust_types.rust_var(name, false) }},
+            {%- endif -%}
+            {% endfor %}
+        };
+        let active_model = create.into_active_model();
+        let model = active_model
+            .insert(db)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(model.into())
+    }
+
+    /// Update an existing {{ model }}.
+    async fn update_{{ entity_name | snake_case }}(
+        &self,
+        ctx: &Context<'_>,
+        id: i32,
+        input: Update{{ model }}Input,
+    ) -> GqlResult<{{ model }}Gql> {
+        let db = ctx.data::<DbConn>()?;
+        let _existing = Entity::find_by_id(id)
+            .one(db)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Not found"))?;
+
+        let update = {{ model }}Update {
+            {% for name, property in entity.attributes | items -%}
+            {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+            {%- if property.required -%}
+            {{ name | snake_case }}_id: input.{{ name | snake_case }}_id.unwrap_or(_existing.{{ name | snake_case }}_id),
+            {%- else -%}
+            {{ name | snake_case }}_id: Some(input.{{ name | snake_case }}_id.unwrap_or(_existing.{{ name | snake_case }}_id.unwrap_or_default())),
+            {%- endif -%}
+            {%- elif property.type == 'enumeration' -%}
+            {{ rust_types.rust_var(name, false) }}: _existing.{{ rust_types.rust_var(name, false) }},
+            {%- elif property.type == 'datetime' or (property.type == 'string' and property.format == 'date-time') -%}
+            {{ rust_types.rust_var(name, false) }}: _existing.{{ rust_types.rust_var(name, false) }},
+            {%- elif property.required -%}
+            {{ rust_types.rust_var(name, false) }}: input.{{ rust_types.rust_var(name, false) }}.unwrap_or(_existing.{{ rust_types.rust_var(name, false) }}),
+            {%- else -%}
+            {{ rust_types.rust_var(name, false) }}: Some(input.{{ rust_types.rust_var(name, false) }}.unwrap_or(_existing.{{ rust_types.rust_var(name, false) }}.unwrap_or_default())),
+            {%- endif -%}
+            {% endfor %}
+        };
+        let mut active_model = update.into_active_model();
+        active_model.id = Set(id);
+        let model = active_model
+            .update(db)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(model.into())
+    }
+
+    /// Delete a {{ model }}.
+    async fn delete_{{ entity_name | snake_case }}(
+        &self,
+        ctx: &Context<'_>,
+        id: i32,
+    ) -> GqlResult<bool> {
+        let db = ctx.data::<DbConn>()?;
+        let model = Entity::find_by_id(id)
+            .one(db)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Not found"))?;
+        use sea_orm::ModelTrait;
+        model.delete(db).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(true)
+    }
+}
+{% else -%}
+// GraphQL protocol not enabled for {{ entity_name }}.
+{% endif -%}

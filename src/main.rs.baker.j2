@@ -1,18 +1,22 @@
 use mimalloc::MiMalloc;
 {{ 'use summer_grpc::GrpcPlugin;' if 'grpc' in protocols }}
-{{ 'use summer::{auto_config, App};' if 'rest' in protocols else 'use summer::App;' }}
+{% set needs_web = 'rest' in protocols or 'activitypub' in protocols or 'graphql' in protocols -%}
+{{ 'use summer::{auto_config, App};' if needs_web else 'use summer::App;' }}
 {{ 'use summer_sea_orm::{SeaOrmPlugin};' if database != 'none' }}
 {{ 'use summer_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
-{{ 'use summer_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
+{{ 'use summer_web::{WebConfigurator, WebPlugin};' if needs_web }}
 {{ 'use ' ~ project_name|snake_case ~ '::services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if use_seaorm_migrations }}
 {% if authentication == 'jwt' and 'rest' in protocols -%}
 use {{ project_name | snake_case }}::services::auth_plugin::AuthPlugin;
+{% endif -%}
+{% if 'activitypub' in protocols -%}
+use {{ project_name | snake_case }}::services::federation_plugin::FederationPlugin;
 {% endif -%}
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-{{ '#[auto_config(WebConfigurator)]' if 'rest' in protocols -}}
+{{ '#[auto_config(WebConfigurator)]' if needs_web -}}
 #[tokio::main]
 async fn main() {
     App::new()
@@ -23,7 +27,8 @@ async fn main() {
         {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' }}
         {{ '.add_plugin(AuthPlugin)' if authentication == 'jwt' and 'rest' in protocols }}
         {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
-        {{ '.add_plugin(WebPlugin)' if 'rest' in protocols }}
+        {{ '.add_plugin(FederationPlugin)' if 'activitypub' in protocols }}
+        {{ '.add_plugin(WebPlugin)' if needs_web }}
         {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
         {{ '.add_plugin(GrpcPlugin)' if 'grpc' in protocols }}
         {% if frontend == 'leptos' -%}

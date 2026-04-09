@@ -1,5 +1,7 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if 'rest' in entity_protos -%}
 {% set model = entity_name | pascal_case -%}
 use summer_web::{get, post, put, delete};
 use summer_web::{
@@ -157,3 +159,6 @@ pub async fn batch_delete(Component(db): Component<DbConn>{% if authentication =
     debug!("Batch delete completed for {{ entity.info.pluralName | kebab_case }}");
     Ok(StatusCode::NO_CONTENT)
 }
+{% else -%}
+// REST protocol not enabled for {{ entity_name }}.
+{% endif -%}

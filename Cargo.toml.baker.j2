@@ -38,7 +38,7 @@ summer = {git="https://github.com/dinosath/spring-rs", branch="master"}
 summer-sea-orm = { git="https://github.com/dinosath/spring-rs", branch="master", version="0.5.0-rc.0", default-features = false, features = ["postgres","with-web","rustls"] }
 sea-orm = { version = "2.0.0-rc.37", features = ["sqlx-postgres","runtime-tokio-rustls","macros","with-chrono","with-json","with-uuid","schema-sync","entity-registry","rbac"], default-features = false }
 {% endif -%}
-{{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'rest' in protocols }}
+{{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'rest' in protocols or 'activitypub' in protocols or 'graphql' in protocols }}
 {{ 'static-serve = "0.5"' if frontend != 'none' }}
 {% if authentication == 'jwt' and 'rest' in protocols -%}
 webgates = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
@@ -50,6 +50,15 @@ summer-grpc = {git="https://github.com/dinosath/spring-rs", branch="master"}
 tonic = "0.14"
 tonic-prost = "0.14"
 prost-types = "0.13"
+{% endif %}
+{% if 'graphql' in protocols -%}
+async-graphql = "7"
+async-graphql-axum = "7"
+{% endif %}
+{% if 'activitypub' in protocols -%}
+activitypub_federation = { version = "0.6", default-features = false, features = ["axum"] }
+url = { version = "2", features = ["serde"] }
+async-trait = "0.1"
 {% endif %}
 tokio.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }

@@ -46,7 +46,8 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
 
 {% for entity_name,entity in entities | items -%}
-{% if entity.attributes | items %}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if entity.attributes | items and 'grpc' in entity_protos %}
 {% set message = entity_name | pascal_case -%}
 {% set message_plural = entity_name | plural | pascal_case -%}
 

@@ -1,0 +1,222 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+// gRPC protocol tests
+//
+// Tests the gRPC service endpoints via tonic client stubs compiled from proto.
+// Uses the in-process test server's gRPC router.
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if 'grpc' in entity_protos -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_pascal = entity_name | pascal_case -%}
+{% set entity_plural_pascal = entity_name | plural | pascal_case -%}
+{% set entity_plural_snake = entity_name | plural | snake_case -%}
+
+/// gRPC tests for {{ entity_name }}
+mod {{ entity_snake }}_grpc_tests {
+    use super::*;
+
+    /// Helper: create a {{ entity_snake }} via the gRPC Create RPC.
+    async fn grpc_create_{{ entity_snake }}(server: &TestServer) -> serde_json::Value {
+        // Use the REST endpoint to create a fixture, then verify via gRPC.
+{% if 'rest' in entity_protos -%}
+        let payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "grpc_test_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "gRPC Test {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "gRPC Test {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let mut request = server.post("/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}").json(&payload);
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+{% endif -%}
+        let response = request.await;
+        assert!(response.status_code().is_success(), "Fixture create failed: {}", response.status_code());
+        response.json::<serde_json::Value>()
+{% else -%}
+        // gRPC-only entity – create via gRPC Create RPC
+        let payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "grpc_test_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "gRPC Test {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "gRPC Test {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Create")
+            .content_type("application/grpc-web+proto")
+            .json(&payload)
+            .await;
+        assert!(response.status_code().is_success(), "gRPC Create failed: {}", response.status_code());
+        response.json::<serde_json::Value>()
+{% endif -%}
+    }
+
+    #[tokio::test]
+    async fn test_grpc_{{ entity_snake }}_list() {
+        let server = init_test_server().await;
+        // Ensure at least one entity exists
+        let _ = grpc_create_{{ entity_snake }}(server).await;
+
+        let response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/List")
+            .content_type("application/json")
+            .json(&json!({"page_size": 10}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "gRPC List {{ entity_plural_pascal }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["{{ entity_plural_snake }}"].is_array(),
+            "Expected '{{ entity_plural_snake }}' array in gRPC List response, got: {:?}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grpc_{{ entity_snake }}_get() {
+        let server = init_test_server().await;
+        let created = grpc_create_{{ entity_snake }}(server).await;
+        let id = created["id"].as_str().unwrap_or(&created["id"].to_string()).to_string();
+
+        let response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Get")
+            .content_type("application/json")
+            .json(&json!({"id": id}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "gRPC Get {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(body["id"].is_string() || body["id"].is_number(), "gRPC Get should return an entity with an id");
+    }
+
+    #[tokio::test]
+    async fn test_grpc_{{ entity_snake }}_update() {
+        let server = init_test_server().await;
+        let created = grpc_create_{{ entity_snake }}(server).await;
+        let id = created["id"].as_str().unwrap_or(&created["id"].to_string()).to_string();
+
+        let update_payload = json!({
+            "id": id,
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "grpc_updated_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "gRPC Updated {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(99) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ 'false' if attr_prop.default == 'true' else 'true' }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "gRPC Updated {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+{% if attr_prop.enum | length > 1 -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[1] | pascal_case }}",
+{% else -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Update")
+            .content_type("application/json")
+            .json(&update_payload)
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "gRPC Update {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grpc_{{ entity_snake }}_delete() {
+        let server = init_test_server().await;
+        let created = grpc_create_{{ entity_snake }}(server).await;
+        let id = created["id"].as_str().unwrap_or(&created["id"].to_string()).to_string();
+
+        let response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Delete")
+            .content_type("application/json")
+            .json(&json!({"id": id}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "gRPC Delete {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        // Verify it's deleted
+        let get_response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Get")
+            .content_type("application/json")
+            .json(&json!({"id": id}))
+            .await;
+
+        assert!(
+            !get_response.status_code().is_success() || {
+                let body: serde_json::Value = get_response.json();
+                body["id"].is_null()
+            },
+            "gRPC Get after Delete should fail for {{ entity_snake }}"
+        );
+    }
+}
+
+{% endif -%}
+{% endfor -%}

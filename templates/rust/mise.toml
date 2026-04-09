@@ -38,6 +38,16 @@ description = "Generate and build grpc sample"
 env.ANSWER = "grpc"
 run = [{ task = "generate"},{ task = "e2e" }]
 
+[tasks.all-protocols]
+description = "Generate and build all-protocols sample (rest+grpc+activitypub+graphql for every entity)"
+env.ANSWER = "all-protocols"
+run = [{ task = "generate"},{ task = "e2e" }]
+
+[tasks.mixed-protocols]
+description = "Generate and build mixed-protocols sample (per-entity protocol overrides)"
+env.ANSWER = "mixed-protocols"
+run = [{ task = "generate"},{ task = "e2e" }]
+
 [tasks.all]
 description = "Generate and build all samples"
-depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc"]
+depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc", "all-protocols", "mixed-protocols"]

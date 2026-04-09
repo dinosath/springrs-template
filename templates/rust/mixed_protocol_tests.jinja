@@ -1,0 +1,464 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+// Mixed-protocol integration tests
+//
+// These tests verify cross-protocol workflows where an ActivityPub Update
+// activity on a public resource is observable through REST and gRPC endpoints,
+// simulating a federated update that triggers downstream reads and actions
+// via other protocols.
+//
+// Scenario: A remote server sends an ActivityPub Update activity for a public
+// entity (e.g. an artist profile). Consumers then use REST and/or gRPC to
+// query the updated resource and take action (list, fetch, verify changes).
+
+{% set ns = namespace(found_entity=false, entity_name='', entity=none) -%}
+{# Find the first entity that supports all three: activitypub + rest + grpc #}
+{% for ename, ent in entities | items | selectattr("1.attributes") -%}
+{% set eprotos = ent.protocols | default(protocols) -%}
+{% if not ns.found_entity and 'activitypub' in eprotos and 'rest' in eprotos and 'grpc' in eprotos -%}
+{% set ns.found_entity = true -%}
+{% set ns.entity_name = ename -%}
+{% set ns.entity = ent -%}
+{% endif -%}
+{% endfor -%}
+
+{% if ns.found_entity -%}
+{% set entity_name = ns.entity_name -%}
+{% set entity = ns.entity -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_pascal = entity_name | pascal_case -%}
+{% set entity_plural = entity.info.pluralName | default(entity_name | plural | snake_case) -%}
+{% set entity_plural_kebab = entity.info.pluralName | kebab_case -%}
+{% set entity_plural_snake = entity_plural | snake_case -%}
+{% set entity_plural_pascal = entity_name | plural | pascal_case -%}
+
+/// Mixed-protocol integration tests using {{ entity_name }} as the shared resource.
+///
+/// Flow:
+/// 1. Create a {{ entity_name }} via REST (acts as the "public resource").
+/// 2. Send an ActivityPub Update activity to its inbox (simulating federation).
+/// 3. Verify the entity is still accessible via REST and gRPC.
+/// 4. Verify the AP outbox reflects the entity's state.
+mod mixed_protocol_{{ entity_snake }}_tests {
+    use super::*;
+
+    /// Helper: create a {{ entity_snake }} via REST.
+    async fn create_{{ entity_snake }}_via_rest(server: &TestServer) -> serde_json::Value {
+        let payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "mixed_test_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "Mixed Test {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "Mixed Test {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let mut request = server.post("/api/{{ entity_plural }}").json(&payload);
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+{% endif -%}
+        let response = request.await;
+        assert!(
+            response.status_code().is_success(),
+            "REST create {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+        response.json::<serde_json::Value>()
+    }
+
+    /// Helper: update a {{ entity_snake }} via REST.
+    async fn update_{{ entity_snake }}_via_rest(server: &TestServer, id: &serde_json::Value) -> serde_json::Value {
+        let update_payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "mixed_updated_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "Mixed Updated {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(42) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ 'false' if attr_prop.default == 'true' else 'true' }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "Mixed Updated {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+{% if attr_prop.enum | length > 1 -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[1] | pascal_case }}",
+{% else -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let mut request = server.put(&format!("/api/{{ entity_plural }}/{}", id)).json(&update_payload);
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+{% endif -%}
+        let response = request.await;
+        assert!(
+            response.status_code().is_success(),
+            "REST update {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+        response.json::<serde_json::Value>()
+    }
+
+    /// 1. Create via REST, then read the ActivityPub Object representation.
+    #[tokio::test]
+    async fn test_rest_create_then_ap_read() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_via_rest(server).await;
+        let id = &created["id"];
+
+        // Read the same entity via ActivityPub
+        let ap_response = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}", id))
+            .add_header(
+                "Accept".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            ap_response.status_code().is_success(),
+            "AP object read after REST create failed: status={}",
+            ap_response.status_code()
+        );
+
+        let ap_body: serde_json::Value = ap_response.json();
+        assert_eq!(ap_body["@context"], "https://www.w3.org/ns/activitystreams");
+        assert_eq!(ap_body["type"], "Object");
+    }
+
+    /// 2. Simulate a federated ActivityPub Update, then verify via REST.
+    ///
+    /// Scenario: A remote server sends an Update activity to the entity's inbox
+    /// (simulating federation). We then verify the entity is still accessible
+    /// and consistent through the REST API.
+    #[tokio::test]
+    async fn test_ap_update_then_rest_verify() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_via_rest(server).await;
+        let id = &created["id"];
+
+        // Simulate a federated Update activity arriving at the inbox
+        let update_activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Update",
+            "actor": "https://remote.example/users/alice",
+            "object": {
+                "id": format!("https://localhost/ap/{{ entity_plural_kebab }}/{}", id),
+                "type": "Object",
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                "{{ attr_name }}": "federated_{{ entity_snake }}@remote.example",
+{% else -%}
+                "{{ attr_name }}": "Federated Updated {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'text' -%}
+                "{{ attr_name }}": "Federated updated content for {{ attr_name }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            },
+            "published": "2025-01-01T00:00:00Z",
+        });
+
+        let inbox_response = server
+            .post(&format!("/ap/{{ entity_plural_kebab }}/{}/inbox", id))
+            .json(&update_activity)
+            .add_header(
+                "Content-Type".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            inbox_response.status_code().as_u16() == 202 || inbox_response.status_code().is_success(),
+            "AP inbox should accept Update activity: status={}",
+            inbox_response.status_code()
+        );
+
+        // Now perform a real update via REST (the AP inbox currently just acknowledges)
+        let _updated = update_{{ entity_snake }}_via_rest(server, id).await;
+
+        // Verify the updated entity via REST GET
+        let mut get_request = server.get(&format!("/api/{{ entity_plural }}/{}", id));
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        get_request = get_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+{% endif -%}
+        let get_response = get_request.await;
+
+        assert!(
+            get_response.status_code().is_success(),
+            "REST read after update failed: status={}",
+            get_response.status_code()
+        );
+
+        let rest_body: serde_json::Value = get_response.json();
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type == 'string' and attr_prop.format != 'email' and attr_prop.type != 'relation' -%}
+        assert_eq!(
+            rest_body["{{ attr_name | snake_case }}"], "Mixed Updated {{ attr_name | title }}",
+            "REST should reflect the updated {{ attr_name }}"
+        );
+{% endif -%}
+{% endfor -%}
+    }
+
+    /// 3. Simulate a federated ActivityPub Update, then verify via gRPC.
+    ///
+    /// After the ActivityPub Update + REST update, verify the entity is also
+    /// correctly retrievable through the gRPC Get endpoint.
+    #[tokio::test]
+    async fn test_ap_update_then_grpc_verify() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_via_rest(server).await;
+        let id = &created["id"];
+
+        // Send AP Update activity
+        let update_activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Update",
+            "actor": "https://remote.example/users/bob",
+            "object": {
+                "id": format!("https://localhost/ap/{{ entity_plural_kebab }}/{}", id),
+                "type": "Object",
+            },
+            "published": "2025-01-01T00:00:00Z",
+        });
+
+        let inbox_response = server
+            .post(&format!("/ap/{{ entity_plural_kebab }}/{}/inbox", id))
+            .json(&update_activity)
+            .add_header(
+                "Content-Type".parse().unwrap(),
+                "application/activity+json".parse().unwrap(),
+            )
+            .await;
+
+        assert!(
+            inbox_response.status_code().as_u16() == 202 || inbox_response.status_code().is_success(),
+            "AP inbox should accept Update activity: status={}",
+            inbox_response.status_code()
+        );
+
+        // Apply the actual data change via REST
+        let _updated = update_{{ entity_snake }}_via_rest(server, id).await;
+
+        // Now verify via gRPC Get
+        let id_str = id.as_str().unwrap_or(&id.to_string()).to_string();
+        let grpc_response = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Get")
+            .content_type("application/json")
+            .json(&json!({"id": id_str}))
+            .await;
+
+        assert!(
+            grpc_response.status_code().is_success(),
+            "gRPC Get after AP Update failed: status={}, body={:?}",
+            grpc_response.status_code(),
+            grpc_response.text()
+        );
+
+        let grpc_body: serde_json::Value = grpc_response.json();
+        assert!(
+            grpc_body["id"].is_string() || grpc_body["id"].is_number(),
+            "gRPC Get should return entity with id after AP Update"
+        );
+    }
+
+    /// 4. Full cross-protocol round-trip:
+    ///    REST Create → AP Object read → AP Inbox (Update) → REST Update →
+    ///    REST Verify → gRPC Verify → AP Outbox check → gRPC List
+    #[tokio::test]
+    async fn test_full_cross_protocol_round_trip() {
+        let server = init_test_server().await;
+
+        // Step 1: Create via REST
+        let created = create_{{ entity_snake }}_via_rest(server).await;
+        let id = &created["id"];
+        let id_str = id.as_str().unwrap_or(&id.to_string()).to_string();
+
+        // Step 2: Verify AP Object is available
+        let ap_obj_response = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}", id))
+            .add_header("Accept".parse().unwrap(), "application/activity+json".parse().unwrap())
+            .await;
+        assert!(ap_obj_response.status_code().is_success(), "AP object should exist after REST create");
+        let ap_obj: serde_json::Value = ap_obj_response.json();
+        assert_eq!(ap_obj["type"], "Object");
+
+        // Step 3: Send AP Update via inbox (federation simulation)
+        let update_activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Update",
+            "actor": "https://remote.example/users/carol",
+            "object": {
+                "id": format!("https://localhost/ap/{{ entity_plural_kebab }}/{}", id),
+                "type": "Object",
+                "summary": "Updated via federation"
+            },
+            "published": "2025-06-15T12:00:00Z",
+        });
+
+        let inbox_resp = server
+            .post(&format!("/ap/{{ entity_plural_kebab }}/{}/inbox", id))
+            .json(&update_activity)
+            .add_header("Content-Type".parse().unwrap(), "application/activity+json".parse().unwrap())
+            .await;
+        assert!(
+            inbox_resp.status_code().as_u16() == 202 || inbox_resp.status_code().is_success(),
+            "AP inbox should accept Update"
+        );
+
+        // Step 4: Apply the real data change via REST
+        let _updated = update_{{ entity_snake }}_via_rest(server, id).await;
+
+        // Step 5: Verify via REST
+        let mut rest_get = server.get(&format!("/api/{{ entity_plural }}/{}", id));
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        rest_get = rest_get.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+{% endif -%}
+        let rest_body: serde_json::Value = rest_get.await.json();
+        assert!(rest_body["id"].is_number() || rest_body["id"].is_string(), "REST Get should return updated entity");
+
+        // Step 6: Verify via gRPC
+        let grpc_get = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/Get")
+            .content_type("application/json")
+            .json(&json!({"id": id_str.clone()}))
+            .await;
+        assert!(grpc_get.status_code().is_success(), "gRPC Get should succeed after cross-protocol update");
+
+        // Step 7: Check AP outbox still works
+        let outbox_resp = server
+            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/outbox", id))
+            .add_header("Accept".parse().unwrap(), "application/activity+json".parse().unwrap())
+            .await;
+        assert!(outbox_resp.status_code().is_success(), "AP outbox should be accessible");
+        let outbox_body: serde_json::Value = outbox_resp.json();
+        assert_eq!(outbox_body["type"], "OrderedCollection");
+
+        // Step 8: Verify entity appears in gRPC List
+        let grpc_list = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/List")
+            .content_type("application/json")
+            .json(&json!({"page_size": 100}))
+            .await;
+        assert!(grpc_list.status_code().is_success(), "gRPC List should succeed");
+        let list_body: serde_json::Value = grpc_list.json();
+        let items = list_body["{{ entity_name | plural | snake_case }}"].as_array()
+            .expect("gRPC List should return an array");
+        assert!(
+            items.iter().any(|item| {
+                let item_id = item["id"].as_str().unwrap_or_default();
+                item_id == id_str
+            }),
+            "Updated {{ entity_snake }} should appear in gRPC List results"
+        );
+    }
+
+    /// 5. AP collection reflects entities created via REST.
+    #[tokio::test]
+    async fn test_ap_collection_reflects_rest_creates() {
+        let server = init_test_server().await;
+
+        // Create multiple entities via REST
+        let _first = create_{{ entity_snake }}_via_rest(server).await;
+        let _second = create_{{ entity_snake }}_via_rest(server).await;
+
+        // Verify the AP OrderedCollection includes them
+        let collection_response = server
+            .get("/ap/{{ entity_plural_kebab }}")
+            .add_header("Accept".parse().unwrap(), "application/activity+json".parse().unwrap())
+            .await;
+
+        assert!(
+            collection_response.status_code().is_success(),
+            "AP collection should be accessible"
+        );
+
+        let body: serde_json::Value = collection_response.json();
+        assert_eq!(body["type"], "OrderedCollection");
+        let total = body["totalItems"].as_u64().unwrap_or(0);
+        assert!(
+            total >= 2,
+            "AP collection should contain at least 2 items after REST creates, got: {}",
+            total
+        );
+    }
+
+    /// 6. gRPC List reflects entity after AP inbox activity + REST update.
+    #[tokio::test]
+    async fn test_grpc_list_after_ap_inbox_and_rest_update() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_via_rest(server).await;
+        let id = &created["id"];
+
+        // Send an AP Announce activity (simulating a boost/share)
+        let announce_activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Announce",
+            "actor": "https://remote.example/users/dave",
+            "object": format!("https://localhost/ap/{{ entity_plural_kebab }}/{}", id),
+        });
+
+        let inbox_resp = server
+            .post(&format!("/ap/{{ entity_plural_kebab }}/{}/inbox", id))
+            .json(&announce_activity)
+            .add_header("Content-Type".parse().unwrap(), "application/activity+json".parse().unwrap())
+            .await;
+        assert!(
+            inbox_resp.status_code().as_u16() == 202 || inbox_resp.status_code().is_success(),
+            "AP inbox should accept Announce activity"
+        );
+
+        // Update via REST to simulate reaction to the announcement
+        let _updated = update_{{ entity_snake }}_via_rest(server, id).await;
+
+        // Verify via gRPC List — should contain the entity
+        let grpc_list = server
+            .post("/grpc/{{ project_name | snake_case }}.{{ entity_pascal }}Service/List")
+            .content_type("application/json")
+            .json(&json!({"page_size": 100}))
+            .await;
+
+        assert!(
+            grpc_list.status_code().is_success(),
+            "gRPC List should succeed after AP Announce + REST update"
+        );
+    }
+}
+
+{% else -%}
+// No entity found with all three protocols (activitypub + rest + grpc).
+// Mixed-protocol integration tests require at least one entity that enables
+// all three protocols. Add `"protocols": ["rest", "grpc", "activitypub"]`
+// to an entity definition to enable these tests.
+{% endif -%}

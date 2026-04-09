@@ -1,0 +1,86 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+use async_graphql::{Schema, MergedObject, EmptySubscription};
+use summer_web::{get, post};
+use summer_web::{
+    error::Result,
+    extractor::Component,
+    axum::{
+        http::StatusCode,
+        response::IntoResponse,
+    },
+};
+use summer_sea_orm::DbConn;
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use summer::tracing::debug;
+
+{% for entity_name, entity in entities | items -%}
+{% if entity.attributes -%}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if 'graphql' in entity_protos -%}
+use super::{{ rust_types.identifier(entity_name) }}::{
+    {{ entity_name | pascal_case }}Query,
+    {{ entity_name | pascal_case }}Mutation,
+};
+{% endif -%}
+{% endif -%}
+{% endfor %}
+
+/// Combined root Query type merging all entity queries.
+#[derive(MergedObject, Default)]
+pub struct QueryRoot(
+    {% for entity_name, entity in entities | items -%}
+    {% if entity.attributes -%}
+    {% set entity_protos = entity.protocols | default(protocols) -%}
+    {% if 'graphql' in entity_protos -%}
+    {{ entity_name | pascal_case }}Query,
+    {% endif -%}
+    {% endif -%}
+    {% endfor %}
+);
+
+/// Combined root Mutation type merging all entity mutations.
+#[derive(MergedObject, Default)]
+pub struct MutationRoot(
+    {% for entity_name, entity in entities | items -%}
+    {% if entity.attributes -%}
+    {% set entity_protos = entity.protocols | default(protocols) -%}
+    {% if 'graphql' in entity_protos -%}
+    {{ entity_name | pascal_case }}Mutation,
+    {% endif -%}
+    {% endif -%}
+    {% endfor %}
+);
+
+pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+
+/// Build the GraphQL schema with DB connection injected into context.
+pub fn build_schema(db: DbConn) -> AppSchema {
+    Schema::build(QueryRoot::default(), MutationRoot::default(), EmptySubscription)
+        .data(db)
+        .finish()
+}
+
+/// POST /graphql — Execute a GraphQL query.
+#[post("/graphql")]
+pub async fn graphql_handler(
+    Component(db): Component<DbConn>,
+    req: GraphQLRequest,
+) -> GraphQLResponse {
+    debug!("GraphQL: Handling query");
+    let schema = build_schema(db);
+    schema.execute(req.into_inner()).await.into()
+}
+
+/// GET /graphql/playground — GraphQL Playground UI.
+#[get("/graphql/playground")]
+pub async fn graphql_playground() -> impl IntoResponse {
+    use async_graphql::http::playground_source;
+    use async_graphql::http::GraphQLPlaygroundConfig;
+    let html = playground_source(GraphQLPlaygroundConfig::new("/graphql"));
+    (
+        StatusCode::OK,
+        [("Content-Type", "text/html; charset=utf-8")],
+        html,
+    )
+}

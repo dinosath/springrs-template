@@ -1,5 +1,34 @@
 {# Macros for new schema only (entities.schema.json). Legacy support removed. #}
 
+{# ---- Per-entity protocol helpers ---- #}
+{# Returns the effective protocols for an entity: entity.protocols if set, else global protocols. #}
+{%- macro entity_protocols(entity, protocols) -%}
+{{ entity.protocols | default(protocols) | join(',') }}
+{%- endmacro %}
+
+{%- macro entity_has_protocol(entity, protocol, protocols) -%}
+{% if entity.protocols is defined and entity.protocols -%}
+{% if protocol in entity.protocols %}true{% else %}false{% endif %}
+{%- else -%}
+{% if protocol in protocols %}true{% else %}false{% endif %}
+{%- endif %}
+{%- endmacro %}
+
+{# Check if ANY entity in the dict uses the given protocol (considering per-entity overrides). #}
+{%- macro any_entity_has_protocol(entities, protocol, protocols) -%}
+{% set ns = namespace(found=false) %}
+{% for entity_name, entity in entities|items %}
+    {% if entity.attributes %}
+        {% if entity.protocols is defined and entity.protocols %}
+            {% if protocol in entity.protocols %}{% set ns.found = true %}{% endif %}
+        {% else %}
+            {% if protocol in protocols %}{% set ns.found = true %}{% endif %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{% if ns.found %}true{% else %}false{% endif %}
+{%- endmacro %}
+
 {# Attribute-level relation helpers #}
 {% macro map_to_name_and_relation(name_and_property) -%}
     {% set name = name_and_property[0] -%}

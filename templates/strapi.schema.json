@@ -54,6 +54,16 @@
                     "description": "Priority for ordering collections."
                 },
 
+                "protocols": {
+                    "type": "array",
+                    "description": "Per-entity protocol override. When set, only these protocols are generated for this entity. When omitted, falls back to the global protocols setting.",
+                    "items": {
+                        "type": "string",
+                        "enum": ["rest", "grpc", "activitypub", "graphql"]
+                    },
+                    "uniqueItems": true
+                },
+
                 "attributes": {
                     "type": "object",
                     "description": "Attribute map keyed by attribute name.",

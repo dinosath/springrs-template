@@ -88,6 +88,8 @@ questions:
     choices:
       - rest
       - grpc
+      - activitypub
+      - graphql
 
   frontend:
     type: str

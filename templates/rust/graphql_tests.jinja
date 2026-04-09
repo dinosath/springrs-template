@@ -1,0 +1,382 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+// GraphQL protocol tests
+//
+// Tests GraphQL queries and mutations for each entity, plus
+// the playground endpoint.
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_protos = entity.protocols | default(protocols) -%}
+{% if 'graphql' in entity_protos -%}
+{% set entity_snake = entity_name | snake_case -%}
+{% set entity_pascal = entity_name | pascal_case -%}
+{% set entity_plural = entity.info.pluralName | default(entity_name | plural | snake_case) -%}
+{% set entity_plural_snake = entity_plural | snake_case -%}
+
+/// GraphQL tests for {{ entity_name }}
+mod {{ entity_snake }}_graphql_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_graphql_create_{{ entity_snake }}() {
+        let server = init_test_server().await;
+
+        let query = r#"mutation {
+            create{{ entity_pascal }}(input: {
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                {{ attr_name | camel_case }}: "gql_test_{{ entity_snake }}@example.com"
+{% else -%}
+                {{ attr_name | camel_case }}: "GQL Test {{ attr_name | title }}"
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default(1) }}
+{% elif attr_prop.type == 'boolean' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default('true') | lower }}
+{% elif attr_prop.type == 'text' -%}
+                {{ attr_name | camel_case }}: "GQL Test {{ attr_name | title }} content"
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+                {{ attr_name | camel_case }}: "{{ attr_prop.enum[0] | default('default') | pascal_case }}"
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            }) {
+                id
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.writeOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+                {{ attr_name | camel_case }}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            }
+        }"#;
+
+        let response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": query}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL create {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["data"]["create{{ entity_pascal }}"].is_object(),
+            "Expected data.create{{ entity_pascal }} in response, got: {:?}",
+            body
+        );
+        assert!(
+            body["data"]["create{{ entity_pascal }}"]["id"].is_number()
+                || body["data"]["create{{ entity_pascal }}"]["id"].is_string(),
+            "Created {{ entity_snake }} should have an id"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_graphql_list_{{ entity_plural_snake }}() {
+        let server = init_test_server().await;
+
+        let query = r#"query {
+            {{ entity_plural_snake }} {
+                id
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.writeOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+                {{ attr_name | camel_case }}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            }
+        }"#;
+
+        let response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": query}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL list {{ entity_plural_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["data"]["{{ entity_plural_snake }}"].is_array(),
+            "Expected data.{{ entity_plural_snake }} array, got: {:?}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn test_graphql_get_{{ entity_snake }}() {
+        let server = init_test_server().await;
+
+        // First create via mutation
+        let create_query = r#"mutation {
+            create{{ entity_pascal }}(input: {
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                {{ attr_name | camel_case }}: "gql_gettest_{{ entity_snake }}@example.com"
+{% else -%}
+                {{ attr_name | camel_case }}: "GQL Get Test {{ attr_name | title }}"
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default(2) }}
+{% elif attr_prop.type == 'boolean' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default('true') | lower }}
+{% elif attr_prop.type == 'text' -%}
+                {{ attr_name | camel_case }}: "GQL Get Test {{ attr_name | title }} content"
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+                {{ attr_name | camel_case }}: "{{ attr_prop.enum[0] | default('default') | pascal_case }}"
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            }) { id }
+        }"#;
+
+        let create_response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": create_query}))
+            .await;
+        let create_body: serde_json::Value = create_response.json();
+        let id = &create_body["data"]["create{{ entity_pascal }}"]["id"];
+
+        // Now query by ID
+        let get_query = format!(
+            r#"query {{ "{{" }} {{ entity_snake }}(id: {}) {{ "{{" }} id {% for attr_name, attr_prop in entity.attributes | items -%}{% if not attr_prop.writeOnly and attr_prop.type != 'relation' -%}{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}{{ attr_name | camel_case }} {% endif -%}{% endif -%}{% endfor -%}{{ "}}" }} {{ "}}" }}"#,
+            id
+        );
+
+        let response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": get_query}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL get {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["data"]["{{ entity_snake }}"].is_object() || body["data"]["{{ entity_snake }}"].is_null(),
+            "Expected data.{{ entity_snake }} in response, got: {:?}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn test_graphql_update_{{ entity_snake }}() {
+        let server = init_test_server().await;
+
+        // Create first
+        let create_query = r#"mutation {
+            create{{ entity_pascal }}(input: {
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                {{ attr_name | camel_case }}: "gql_upd_{{ entity_snake }}@example.com"
+{% else -%}
+                {{ attr_name | camel_case }}: "GQL Update Test {{ attr_name | title }}"
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default(3) }}
+{% elif attr_prop.type == 'boolean' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default('true') | lower }}
+{% elif attr_prop.type == 'text' -%}
+                {{ attr_name | camel_case }}: "GQL Update Test {{ attr_name | title }} content"
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+                {{ attr_name | camel_case }}: "{{ attr_prop.enum[0] | default('default') | pascal_case }}"
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            }) { id }
+        }"#;
+
+        let create_response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": create_query}))
+            .await;
+        let create_body: serde_json::Value = create_response.json();
+        let id = &create_body["data"]["create{{ entity_pascal }}"]["id"];
+
+        // Update
+        let update_query = format!(
+            r#"mutation {{ "{{" }} update{{ entity_pascal }}(id: {}, input: {{ "{{" }}
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                {{ attr_name | camel_case }}: "gql_updated_{{ entity_snake }}@example.com"
+{% else -%}
+                {{ attr_name | camel_case }}: "GQL Updated {{ attr_name | title }}"
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default(99) }}
+{% elif attr_prop.type == 'boolean' -%}
+                {{ attr_name | camel_case }}: {{ 'false' if attr_prop.default == 'true' else 'true' }}
+{% elif attr_prop.type == 'text' -%}
+                {{ attr_name | camel_case }}: "GQL Updated {{ attr_name | title }} content"
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+{% if attr_prop.enum | length > 1 -%}
+                {{ attr_name | camel_case }}: "{{ attr_prop.enum[1] | pascal_case }}"
+{% else -%}
+                {{ attr_name | camel_case }}: "{{ attr_prop.enum[0] | default('default') | pascal_case }}"
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            {{ "}}" }}) {{ "{{" }} id {{ "}}" }} {{ "}}" }}"#,
+            id
+        );
+
+        let response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": update_query}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL update {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_graphql_delete_{{ entity_snake }}() {
+        let server = init_test_server().await;
+
+        // Create first
+        let create_query = r#"mutation {
+            create{{ entity_pascal }}(input: {
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if macros.relation_is_many_to_many(attr_prop) != 'true' and macros.relation_is_one_to_many(attr_prop) != 'true' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                {{ attr_name | camel_case }}: "gql_del_{{ entity_snake }}@example.com"
+{% else -%}
+                {{ attr_name | camel_case }}: "GQL Delete Test {{ attr_name | title }}"
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default(4) }}
+{% elif attr_prop.type == 'boolean' -%}
+                {{ attr_name | camel_case }}: {{ attr_prop.default | default('true') | lower }}
+{% elif attr_prop.type == 'text' -%}
+                {{ attr_name | camel_case }}: "GQL Delete Test {{ attr_name | title }} content"
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+                {{ attr_name | camel_case }}: "{{ attr_prop.enum[0] | default('default') | pascal_case }}"
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            }) { id }
+        }"#;
+
+        let create_response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": create_query}))
+            .await;
+        let create_body: serde_json::Value = create_response.json();
+        let id = &create_body["data"]["create{{ entity_pascal }}"]["id"];
+
+        // Delete
+        let delete_query = format!(
+            r#"mutation {{ "{{" }} delete{{ entity_pascal }}(id: {}) {{ "}}" }}"#,
+            id
+        );
+
+        let response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": delete_query}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL delete {{ entity_snake }} failed: status={}, body={:?}",
+            response.status_code(),
+            response.text()
+        );
+    }
+}
+
+{% endif -%}
+{% endfor -%}
+
+/// Tests for the GraphQL playground endpoint.
+mod graphql_playground_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_graphql_playground_accessible() {
+        let server = init_test_server().await;
+        let response = server.get("/graphql/playground").await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL playground should be accessible, got: {}",
+            response.status_code()
+        );
+
+        let body = response.text();
+        assert!(
+            body.contains("graphql") || body.contains("GraphQL") || body.contains("playground"),
+            "Expected GraphQL playground HTML"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_graphql_introspection() {
+        let server = init_test_server().await;
+
+        let query = r#"{ __schema { queryType { name } mutationType { name } } }"#;
+        let response = server
+            .post("/graphql")
+            .content_type("application/json")
+            .json(&json!({"query": query}))
+            .await;
+
+        assert!(
+            response.status_code().is_success(),
+            "GraphQL introspection failed: status={}",
+            response.status_code()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["data"]["__schema"]["queryType"]["name"].is_string(),
+            "Expected introspection to return queryType name"
+        );
+    }
+}

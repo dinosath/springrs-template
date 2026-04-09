@@ -3,6 +3,16 @@ mod controllers {
     automod::dir!("src/controllers");
 }
 {% endif -%}
+{% if 'activitypub' in protocols -%}
+pub mod activitypub {
+    automod::dir!(pub "src/activitypub");
+}
+{% endif -%}
+{% if 'graphql' in protocols -%}
+pub mod graphql {
+    automod::dir!(pub "src/graphql");
+}
+{% endif -%}
 {% if database != 'none' -%}
 pub mod models {
     automod::dir!(pub "src/models");
@@ -42,7 +52,8 @@ use static_serve::embed_assets;
 embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
 {% endif -%}
 
-{% if 'rest' in protocols -%}
+{% set needs_web = 'rest' in protocols or 'activitypub' in protocols or 'graphql' in protocols -%}
+{% if needs_web -%}
 /// Build the fully-initialised axum [`Router`] without binding a TCP listener.
 ///
 /// Intended for integration tests only – guarded by `#[cfg(test)]`.
@@ -60,12 +71,16 @@ pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
     {% if authentication == 'jwt' -%}
     use crate::services::auth_plugin::AuthPlugin;
     {% endif -%}
+    {% if 'activitypub' in protocols -%}
+    use crate::services::federation_plugin::FederationPlugin;
+    {% endif -%}
 
     let app: Arc<summer::App> = App::new()
         .add_router(::summer_web::handler::auto_router())
         {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' }}
         {{ '.add_plugin(AuthPlugin)' if authentication == 'jwt' }}
         {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
+        {{ '.add_plugin(FederationPlugin)' if 'activitypub' in protocols }}
         .add_plugin(WebPlugin)
         .build()
         .await?;
