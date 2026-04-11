@@ -2,6 +2,7 @@
     "project_name": "sample_grpc_app",
     "authentication": "none",
     "database": "postgres",
+    "row_level_security": false,
     "use_sqlx_migrations": false,
     "db_schema": "public",
     "id_type": "integer",

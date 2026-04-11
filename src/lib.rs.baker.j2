@@ -45,10 +45,8 @@ embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
 {% if 'rest' in protocols -%}
 /// Build the fully-initialised axum [`Router`] without binding a TCP listener.
 ///
-/// Intended for integration tests only – guarded by `#[cfg(test)]`.
 /// Runs every registered plugin's `build()` hook (database connection, auth, …)
 /// and extracts the composed router, ready for [`axum_test::TestServer`].
-#[cfg(test)]
 pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
     use std::ops::Deref;
     use std::sync::Arc;
@@ -60,11 +58,15 @@ pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
     {% if authentication == 'jwt' -%}
     use crate::services::auth_plugin::AuthPlugin;
     {% endif -%}
+    {% if row_level_security -%}
+    use crate::services::tenant_plugin::TenantPlugin;
+    {% endif -%}
 
     let app: Arc<summer::App> = App::new()
         .add_router(::summer_web::handler::auto_router())
         {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' }}
         {{ '.add_plugin(AuthPlugin)' if authentication == 'jwt' }}
+        {{ '.add_plugin(TenantPlugin)' if row_level_security }}
         {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
         .add_plugin(WebPlugin)
         .build()

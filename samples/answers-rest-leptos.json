@@ -2,6 +2,7 @@
     "project_name": "sample_leptos_app",
     "authentication": "jwt",
     "database": "postgres",
+    "row_level_security": false,
     "use_sqlx_migrations": true,
     "features": [
         "open-telemetry",

@@ -1,0 +1,48 @@
+{% import "macros.jinja" as macros -%}
+[profile.default]
+slow-timeout = { period = "300s", terminate-after = 2 }
+retries = 1
+
+[profile.ci]
+fail-fast = false
+
+{% if 'rest' in protocols -%}
+# ── Per-entity test groups ──────────────────────────────────────────────
+# Within an entity, tests run serially (max-threads = 1) because they share
+# a database.  Different entity groups run in parallel.
+[test-groups]
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_snake = entity_name | snake_case -%}
+{{ entity_snake }}-tests = { max-threads = 1 }
+{% endfor -%}
+{% if row_level_security and authentication != 'jwt' -%}
+rls-tests = { max-threads = 1 }
+{% endif -%}
+health-tests = { max-threads = 1 }
+{% if authentication == 'jwt' -%}
+auth-tests = { max-threads = 1 }
+{% endif -%}
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_snake = entity_name | snake_case -%}
+[[profile.default.overrides]]
+filter = 'test(~{{ entity_snake }}_tests::)'
+test-group = '{{ entity_snake }}-tests'
+
+{% endfor -%}
+{% if row_level_security and authentication != 'jwt' -%}
+[[profile.default.overrides]]
+filter = 'test(~rls_tests::)'
+test-group = 'rls-tests'
+
+{% endif -%}
+[[profile.default.overrides]]
+filter = 'test(~health_tests::)'
+test-group = 'health-tests'
+
+{% if authentication == 'jwt' -%}
+[[profile.default.overrides]]
+filter = 'test(~auth_tests::)'
+test-group = 'auth-tests'
+{% endif -%}
+{% endif -%}

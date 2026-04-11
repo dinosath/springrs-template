@@ -1,12 +1,13 @@
 {
-    "project_name": "sample_app_jwt",
+    "project_name": "sample_rls_app",
     "authentication": "jwt",
     "database": "postgres",
-    "row_level_security": false,
+    "row_level_security": true,
     "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm"],
     "protocols": ["rest"],
     "static_includes": [],
+    "include_in_dockerfile": "config",
     "entities": {
         "Profile": {
             "kind": "collectionType",
@@ -86,11 +87,12 @@
             "kind": "collectionType",
             "collectionName": "categories",
             "priority": 1,
+            "rls": false,
             "info": {
                 "displayName": "Category",
                 "singularName": "category",
                 "pluralName": "categories",
-                "description": "Categories for organizing articles"
+                "description": "Categories for organizing articles – shared across tenants"
             },
             "attributes": {
                 "name": {
@@ -127,11 +129,12 @@
             "kind": "collectionType",
             "collectionName": "tags",
             "priority": 1,
+            "rls": false,
             "info": {
                 "displayName": "Tag",
                 "singularName": "tag",
                 "pluralName": "tags",
-                "description": "Tags for labeling articles"
+                "description": "Tags for labeling articles – shared across tenants"
             },
             "attributes": {
                 "name": {
@@ -162,7 +165,7 @@
                 "displayName": "Article",
                 "singularName": "article",
                 "pluralName": "articles",
-                "description": "Blog articles"
+                "description": "Blog articles – tenant-scoped"
             },
             "attributes": {
                 "title": {
@@ -237,7 +240,7 @@
                 "displayName": "Comment",
                 "singularName": "comment",
                 "pluralName": "comments",
-                "description": "Article comments"
+                "description": "Article comments – tenant-scoped"
             },
             "attributes": {
                 "content": {

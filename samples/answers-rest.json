@@ -2,6 +2,7 @@
     "project_name": "sample_app",
     "authentication": "none",
     "database": "postgres",
+    "row_level_security": false,
     "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm","docker_hardened_images"],
     "protocols": ["rest"],

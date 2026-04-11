@@ -60,6 +60,12 @@ questions:
     default: public
     ask_if: database == 'postgres'
 
+  row_level_security:
+    type: bool
+    help: Enable PostgreSQL Row-Level Security (RLS) for multi-tenant data isolation?
+    default: false
+    ask_if: database == 'postgres'
+
   id_type:
     type: str
     help: What type should primary keys use?

@@ -1,0 +1,175 @@
+{% import "macros.jinja" as macros -%}
+//! Multi-tenant Row-Level Security (RLS) plugin.
+//!
+//! Provides:
+//! - [`TenantPlugin`] – registers axum middleware that extracts the tenant
+//!   identifier from every incoming request and stores it in request extensions.
+//! - [`TenantId`] – an axum extractor that retrieves the current tenant.
+//! - [`set_tenant`] – executes `SET LOCAL app.current_tenant` on a DB
+//!   connection/transaction so PostgreSQL RLS policies take effect.
+//!
+//! ## Tenant source
+{% if authentication == 'jwt' -%}
+//! The tenant is read from the JWT `tenant_id` claim (requires authentication = jwt).
+{% else -%}
+//! The tenant is read from the `X-Tenant-Id` HTTP header.
+{% endif -%}
+
+use std::sync::Arc;
+
+use summer::async_trait;
+use summer::tracing::{debug, warn};
+use summer::{app::AppBuilder, plugin::{Plugin, ComponentRegistry, MutableComponentRegistry}};
+use summer_web::axum::{
+    extract::Request,
+    http::StatusCode,
+    middleware::Next,
+    response::Response,
+};
+use summer_web::{WebPlugin, RouterLayers};
+use sea_orm::ConnectionTrait;
+
+// ─── TenantId type ─────────────────────────────────────────────────────────────
+
+/// Opaque tenant identifier carried through request extensions and used to
+/// configure PostgreSQL `app.current_tenant` via [`set_tenant`].
+#[derive(Clone, Debug)]
+pub struct TenantId(pub String);
+
+impl TenantId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<S: Send + Sync> summer_web::axum::extract::FromRequestParts<S> for TenantId {
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(
+        parts: &mut summer_web::axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<TenantId>()
+            .cloned()
+            .ok_or((StatusCode::BAD_REQUEST, "missing tenant context"))
+    }
+}
+
+// ─── set_tenant helper ─────────────────────────────────────────────────────────
+
+/// Executes `SET LOCAL app.current_tenant = '<tenant_id>'` on the given
+/// connection so that PostgreSQL RLS policies filter rows for this tenant.
+///
+/// **Must** be called inside a transaction (`BEGIN … COMMIT`) for `SET LOCAL`
+/// to be scoped correctly.  Outside a transaction the setting persists for the
+/// session — which is usually *not* what you want in a connection-pooled setup.
+pub async fn set_tenant<C: ConnectionTrait>(db: &C, tenant: &TenantId) -> Result<(), sea_orm::DbErr> {
+    // Use set_config which safely handles the value as a function argument.
+    // The single-quote escaping prevents SQL injection in the tenant value.
+    let sql = format!(
+        "SELECT set_config('app.current_tenant', '{}', true)",
+        tenant.as_str().replace('\'', "''")
+    );
+    db.execute_unprepared(&sql).await?;
+    Ok(())
+}
+
+// ─── Middleware ─────────────────────────────────────────────────────────────────
+
+{% if authentication == 'jwt' -%}
+/// Middleware that extracts the tenant identifier from the JWT `tenant_id` claim.
+async fn tenant_middleware(mut request: Request, next: Next) -> Response {
+    // The AuthUser extractor must have already decoded the JWT and placed the
+    // claims in extensions.  We expect a `tenant_id` string claim.
+    use crate::services::auth_plugin::AUTH_STATE;
+
+    let auth_header = request
+        .headers()
+        .get(summer_web::axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "));
+
+    match auth_header {
+        Some(token) => {
+            if let Some(auth) = AUTH_STATE.get() {
+                use webgates::codecs::Codec;
+                match auth.jwt_codec.decode(token.as_bytes()) {
+                    Ok(claims) => {
+                        // Try to get tenant_id from the extra claims map, falling
+                        // back to the account user_id.
+                        let tenant = claims
+                            .custom_claims
+                            .user_id
+                            .clone();
+                        debug!(tenant = %tenant, "resolved tenant from JWT");
+                        request.extensions_mut().insert(TenantId(tenant));
+                    }
+                    Err(_) => {
+                        warn!("JWT decode failed in tenant middleware – skipping tenant");
+                    }
+                }
+            }
+            next.run(request).await
+        }
+        None => {
+            // No Authorization header – let downstream handlers decide
+            // whether that's acceptable.
+            next.run(request).await
+        }
+    }
+}
+{% else -%}
+/// Middleware that extracts the tenant identifier from the `X-Tenant-Id` header.
+async fn tenant_middleware(mut request: Request, next: Next) -> Response {
+    let tenant_value = request
+        .headers()
+        .get("X-Tenant-Id")
+        .and_then(|v| v.to_str().ok().map(|s| s.to_owned()));
+    if let Some(tenant_str) = tenant_value {
+        debug!(tenant = %tenant_str, "resolved tenant from X-Tenant-Id header");
+        request.extensions_mut().insert(TenantId(tenant_str));
+    }
+    next.run(request).await
+}
+{% endif -%}
+
+// ─── Plugin ───────────────────────────────────────────────────────────────────
+
+/// Summer plugin that registers the tenant-extraction middleware layer.
+pub struct TenantPlugin;
+
+#[async_trait]
+impl Plugin for TenantPlugin {
+    async fn build(&self, app: &mut AppBuilder) {
+        let layer_fn: Arc<dyn Fn(summer_web::Router) -> summer_web::Router + Send + Sync> =
+            Arc::new(|router| {
+                router.layer(summer_web::axum::middleware::from_fn(tenant_middleware))
+            });
+
+        match app.get_component_ref::<RouterLayers>() {
+            Some(layers) => {
+                let mut layers: RouterLayers = (*layers).clone();
+                layers.push(layer_fn);
+                app.add_component(layers);
+            }
+            None => {
+                let mut layers = RouterLayers::default();
+                layers.push(layer_fn);
+                app.add_component(layers);
+            }
+        }
+    }
+
+    fn dependencies(&self) -> Vec<&str> {
+{% if authentication == 'jwt' %}
+        vec![
+            std::any::type_name::<WebPlugin>(),
+            std::any::type_name::<crate::services::auth_plugin::AuthPlugin>(),
+        ]
+{% else %}
+        vec![std::any::type_name::<WebPlugin>()]
+{% endif %}
+    }
+}

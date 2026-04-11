@@ -1,6 +1,7 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
 {% set model = entity_name | pascal_case -%}
+{% set entity_rls = macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
 use summer_web::{get, post, put, delete};
 use summer_web::{
     error::Result,
@@ -14,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create,{{model}}Update,{{model}}Response};
 {% if authentication == 'jwt' -%}
 use crate::services::auth_plugin::AuthUser;
+{% endif -%}
+{% if entity_rls -%}
+use crate::services::tenant_plugin::{TenantId, set_tenant};
 {% endif -%}
 /**
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
@@ -36,12 +40,25 @@ where
 }
 
 #[get("/api/{{ entity.info.pluralName | kebab_case }}")]
-pub async fn list(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}) -> Result<impl IntoResponse> {
+pub async fn list(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse> {
     debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
+    {% if entity_rls -%}
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let models = Entity::find()
+        .all(&txn)
+        .await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% else -%}
     let models = Entity::find()
         .all(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% endif -%}
     debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
     let responses: Vec<{{ entity_name | pascal_case }}Response> = models.into_iter().map(Into::into).collect();
 
@@ -56,46 +73,99 @@ pub async fn list(Component(db): Component<DbConn>{% if authentication == 'jwt' 
 }
 
 #[post("/api/{{ entity.info.pluralName | kebab_case }}")]
-pub async fn create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
+pub async fn create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
     debug!("Creating new {{ entity_name | snake_case }} - Request: {:?}",create);
+    {% if entity_rls -%}
+    let mut create = create;
+    create.tenant_id = tenant.as_str().to_owned();
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let active_model = create.into_active_model();
+    let model = active_model.insert(&txn)
+        .await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% else -%}
     let active_model = create.into_active_model();
     let model = active_model.insert(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
+    {% endif -%}
     debug!("Created {{ entity_name | snake_case }} with id: {:?}", model.id);
     let resp: {{model}}Response = model.into();
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
+pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
     debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
+    {% if entity_rls -%}
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let _ = load_item(&txn, id).await?;
+    let mut active_model = update.into_active_model();
+    active_model.id = Set(id);
+    let model = active_model.update(&txn)
+        .await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% else -%}
     let _ = load_item(&db, id).await?;
     let mut active_model = update.into_active_model();
     active_model.id = Set(id);
     let model = active_model.update(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
+    {% endif -%}
     debug!("Successfully updated {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{model}}Response = model.into();
     Ok(Json(resp))
 }
 
 #[delete("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}) -> Result<impl IntoResponse> {
+pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse> {
     debug!("Deleting {{ entity_name | snake_case }} with id: {}", id);
+    {% if entity_rls -%}
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let model = load_item(&txn, id).await?;
+    model.delete(&txn)
+        .await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% else -%}
     let model = load_item(&db, id).await?;
     model.delete(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% endif -%}
     debug!("Successfully deleted {{ entity_name | snake_case }} with id: {}", id);
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[get("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
-pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}) -> Result<impl IntoResponse> {
+pub async fn read_one(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse> {
     debug!("Fetching {{ entity_name | snake_case }} with id: {}", id);
+    {% if entity_rls -%}
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let model = load_item(&txn, id).await?;
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% else -%}
     let model = load_item(&db, id).await?;
+    {% endif -%}
     debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{model}}Response = model.into();
     Ok(Json(resp))
@@ -109,12 +179,20 @@ pub struct {{model}}BatchUpdateItem {
 }
 
 #[post("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
-pub async fn batch_create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(items): Json<Vec<{{model}}Create>>) -> Result<impl IntoResponse> {
+pub async fn batch_create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(items): Json<Vec<{{model}}Create>>) -> Result<impl IntoResponse> {
     debug!("Batch creating {} {{ entity.info.pluralName | kebab_case }}", items.len());
     let txn = db.begin().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% if entity_rls -%}
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% endif -%}
     let mut responses = Vec::with_capacity(items.len());
     for item in items {
+        {% if entity_rls -%}
+        let mut item = item;
+        item.tenant_id = tenant.as_str().to_owned();
+        {% endif -%}
         let active_model = item.into_active_model();
         let model = active_model.insert(&txn).await
             .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
@@ -127,10 +205,14 @@ pub async fn batch_create(Component(db): Component<DbConn>{% if authentication =
 }
 
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
-pub async fn batch_update(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(items): Json<Vec<{{model}}BatchUpdateItem>>) -> Result<impl IntoResponse> {
+pub async fn batch_update(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(items): Json<Vec<{{model}}BatchUpdateItem>>) -> Result<impl IntoResponse> {
     debug!("Batch updating {} {{ entity.info.pluralName | kebab_case }}", items.len());
     let txn = db.begin().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% if entity_rls -%}
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% endif -%}
     let mut responses = Vec::with_capacity(items.len());
     for item in items {
         let _ = load_item(&txn, item.id).await?;
@@ -147,13 +229,27 @@ pub async fn batch_update(Component(db): Component<DbConn>{% if authentication =
 }
 
 #[delete("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
-pub async fn batch_delete(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(ids): Json<Vec<i32>>) -> Result<impl IntoResponse> {
+pub async fn batch_delete(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(ids): Json<Vec<i32>>) -> Result<impl IntoResponse> {
     debug!("Batch deleting {} {{ entity.info.pluralName | kebab_case }}", ids.len());
+    {% if entity_rls -%}
+    let txn = db.begin().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    Entity::delete_many()
+        .filter(Column::Id.is_in(ids))
+        .exec(&txn)
+        .await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    txn.commit().await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% else -%}
     Entity::delete_many()
         .filter(Column::Id.is_in(ids))
         .exec(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    {% endif -%}
     debug!("Batch delete completed for {{ entity.info.pluralName | kebab_case }}");
     Ok(StatusCode::NO_CONTENT)
 }

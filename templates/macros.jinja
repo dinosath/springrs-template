@@ -113,3 +113,26 @@
 {%- macro m21_relation_equal_name(name,property) -%}{% if relation_is_many_to_one(property)=='true' and property.target|snake_case == name|snake_case %}true{% else %}false{% endif %}{%- endmacro %}
 
 {%- macro is_enum(property) -%}{% if property.enum and property.enum|length > 0 %}true{% else %}false{% endif %}{%- endmacro %}
+
+{# ---- Row-Level Security (RLS) helpers ---- #}
+
+{#- Check whether a specific entity has RLS enabled.
+    Per-entity `rls` field overrides the global `row_level_security` setting. -#}
+{%- macro entity_has_rls(entity, row_level_security) -%}
+{%- if entity.rls is defined and entity.rls is not none -%}
+    {{ 'true' if entity.rls else 'false' }}
+{%- else -%}
+    {{ 'true' if row_level_security else 'false' }}
+{%- endif -%}
+{%- endmacro -%}
+
+{#- Check whether *any* entity in the map has RLS enabled. -#}
+{%- macro any_entity_has_rls(entities, row_level_security) -%}
+{%- set ns = namespace(found=false) -%}
+{%- for entity_name, entity in entities|items -%}
+    {%- if entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+        {%- set ns.found = true -%}
+    {%- endif -%}
+{%- endfor -%}
+{{ 'true' if ns.found else 'false' }}
+{%- endmacro -%}

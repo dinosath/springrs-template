@@ -33,7 +33,8 @@ springrs-template/
 │   ├── controllers/             # Conditional: only rendered when 'rest' in protocols
 │   ├── models/                  # Conditional: only rendered when database=='postgres'
 │   └── services/
-│       └── seaorm_migration_plugin.rs.baker.j2
+│       ├── seaorm_migration_plugin.rs.baker.j2
+│       └── tenant_plugin.rs.baker.j2  # Conditional: only rendered when row_level_security
 │
 ├── migration/                   # SeaORM migration crate template (conditional)
 ├── proto/                       # .proto template (conditional: 'grpc' in protocols)
@@ -62,12 +63,14 @@ springrs-template/
 │   ├── answers-rest.json
 │   ├── answers-rest-jwt.json
 │   ├── answers-rest-shadcn.json
+│   ├── answers-rest-rls.json    # RLS-enabled variant (per-entity overrides)
 │   └── answers-grpc.json
 │
 └── generated/                   # Output directory written by the test tasks (git-ignored)
     ├── rest/
     ├── rest-jwt/
     ├── rest-shadcn/
+    ├── rest-rls/
     └── grpc/
 ```
 
@@ -98,6 +101,7 @@ how entire sub-trees are included or excluded based on answers:
 | `{% if 'shadcn-admin-kit'==frontend %}frontend{% endif %}/` | frontend is shadcn-admin-kit | `frontend/` dir is included |
 | `{%if 'rest' in protocols%}controllers{% endif %}/` | protocols contains rest | `controllers/` dir is included |
 | `{%if database=='postgres'%}models{% endif %}/` | database is postgres | `models/` dir is included |
+| `{% if row_level_security %}tenant_plugin.rs{% endif %}` | row_level_security is true | `tenant_plugin.rs` is included |
 
 If an expression evaluates to an empty string the path segment (and its whole sub-tree) is
 omitted from the output.
@@ -126,6 +130,8 @@ mise run all
 mise run rest
 mise run rest-jwt
 mise run rest-shadcn
+mise run rest-rls
+mise run grpc
 mise run grpc
 ```
 

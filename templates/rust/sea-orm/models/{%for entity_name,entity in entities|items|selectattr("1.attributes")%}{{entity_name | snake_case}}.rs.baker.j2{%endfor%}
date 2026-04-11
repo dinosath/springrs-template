@@ -24,6 +24,9 @@ pub struct Model {
     pub id: {{ rust_types.rust_id_type(id_type) }},
     pub created_at: DateTime,
     pub last_updated: DateTime,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    pub tenant_id: String,
+    {% endif -%}
     {% for name, property in entity.attributes | items -%}
     {{ rust_types.seaorm_derive(name, property) | trim -}}
     {% if property.type == 'relation' -%}
@@ -46,6 +49,10 @@ impl ActiveModelBehavior for ActiveModel {}
     set(last_updated = "chrono::Utc::now().naive_utc()")
 )]
 pub struct {{ entity_name | pascal_case }}Create {
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    #[serde(skip_deserializing)]
+    pub tenant_id: String,
+    {% endif -%}
     {% for name, property in entity.attributes | items -%}
     {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
@@ -80,6 +87,9 @@ pub struct {{ entity_name | pascal_case }}Response {
     pub id: {{ rust_types.rust_id_type(id_type) }},
     pub created_at: DateTime,
     pub last_updated: DateTime,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    pub tenant_id: String,
+    {% endif -%}
     {% for name, property in entity.attributes | items -%}
     {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
@@ -97,6 +107,9 @@ impl From<Model> for {{ entity_name | pascal_case }}Response {
             id: model.id,
             created_at: model.created_at,
             last_updated: model.last_updated,
+            {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+            tenant_id: model.tenant_id,
+            {% endif -%}
             {% for name, property in entity.attributes | items -%}
             {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
             {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
