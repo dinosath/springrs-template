@@ -3,11 +3,6 @@ mod controllers {
     automod::dir!("src/controllers");
 }
 {% endif -%}
-{% if 'activitypub' in protocols -%}
-pub mod activitypub {
-    automod::dir!(pub "src/activitypub");
-}
-{% endif -%}
 {% if 'graphql' in protocols -%}
 pub mod graphql {
     automod::dir!(pub "src/graphql");
@@ -56,10 +51,8 @@ embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
 {% if needs_web -%}
 /// Build the fully-initialised axum [`Router`] without binding a TCP listener.
 ///
-/// Intended for integration tests only – guarded by `#[cfg(test)]`.
-/// Runs every registered plugin's `build()` hook (database connection, auth, …)
-/// and extracts the composed router, ready for [`axum_test::TestServer`].
-#[cfg(test)]
+/// Intended for integration tests – builds the app, extracts the composed
+/// router, ready for [`axum_test::TestServer`].
 pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
     use std::ops::Deref;
     use std::sync::Arc;

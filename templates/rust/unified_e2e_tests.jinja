@@ -43,7 +43,7 @@ mod {{ entity_snake }}_tests {
         let mut request = server.post("/api/{{ entity_plural }}").json(&payload);
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        request = request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let response = request.await;
@@ -71,7 +71,7 @@ mod {{ entity_snake }}_tests {
         let mut request = server.get("/api/{{ entity_plural }}");
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        request = request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let response = request.await;
@@ -117,7 +117,7 @@ mod {{ entity_snake }}_tests {
         let mut create_request = server.post("/api/{{ entity_plural }}").json(&payload);
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        create_request = create_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        create_request = create_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let create_response = create_request.await;
@@ -127,7 +127,7 @@ mod {{ entity_snake }}_tests {
         // Now get the entity
         let mut get_request = server.get(&format!("/api/{{ entity_plural }}/{}", id));
 {% if authentication != 'none' -%}
-        get_request = get_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        get_request = get_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let response = get_request.await;
@@ -173,7 +173,7 @@ mod {{ entity_snake }}_tests {
         let mut create_request = server.post("/api/{{ entity_plural }}").json(&payload);
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        create_request = create_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        create_request = create_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let create_response = create_request.await;
@@ -209,7 +209,7 @@ mod {{ entity_snake }}_tests {
 
         let mut update_request = server.put(&format!("/api/{{ entity_plural }}/{}", id)).json(&update_payload);
 {% if authentication != 'none' -%}
-        update_request = update_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        update_request = update_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let response = update_request.await;
@@ -259,7 +259,7 @@ mod {{ entity_snake }}_tests {
         let mut create_request = server.post("/api/{{ entity_plural }}").json(&payload);
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        create_request = create_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        create_request = create_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let create_response = create_request.await;
@@ -269,7 +269,7 @@ mod {{ entity_snake }}_tests {
         // Delete the entity
         let mut delete_request = server.delete(&format!("/api/{{ entity_plural }}/{}", id));
 {% if authentication != 'none' -%}
-        delete_request = delete_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        delete_request = delete_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let response = delete_request.await;
@@ -284,7 +284,7 @@ mod {{ entity_snake }}_tests {
         // Verify it's deleted
         let mut get_request = server.get(&format!("/api/{{ entity_plural }}/{}", id));
 {% if authentication != 'none' -%}
-        get_request = get_request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        get_request = get_request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         
         let get_response = get_request.await;

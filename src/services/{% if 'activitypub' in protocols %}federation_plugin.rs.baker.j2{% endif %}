@@ -1,19 +1,20 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
-//! ActivityPub Federation plugin.
+//! ActivityPub Federation plugin and event publishing service.
 //!
-//! Initialises an [`activitypub_federation::config::FederationConfig`] at
-//! startup and stores it in the module-level [`FEDERATION`] singleton so that
-//! ActivityPub handlers can access it without requiring the
-//! `FederationMiddleware` layer (which would conflict with summer-web routing).
+//! Initialises [`activitypub_federation::config::FederationConfig`] at startup,
+//! provides server-level AP endpoints (WebFinger, actor, inbox, outbox), and
+//! exposes event publishing helpers so that REST and gRPC controllers can
+//! broadcast Create / Update / Delete activities to federated peers.
 //!
 //! ## Configuration
 //!
-//! | TOML key               | Env override          | Description                        |
-//! |------------------------|-----------------------|------------------------------------|
-//! | `federation.domain`    | `FEDERATION_DOMAIN`   | Public hostname of this instance   |
+//! | Env variable           | Description                                              |
+//! |------------------------|----------------------------------------------------------|
+//! | `FEDERATION_DOMAIN`    | Public hostname of this instance (default: localhost:8080)|
+//! | `FEDERATION_PEERS`     | Comma-separated list of peer instance base URLs           |
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use activitypub_federation::{
     config::FederationConfig,
@@ -21,26 +22,46 @@ use activitypub_federation::{
 };
 use summer::async_trait;
 use summer::plugin::ComponentRegistry;
-use summer::tracing::info;
+use summer::tracing::{debug, info, warn};
 use summer::{app::AppBuilder, plugin::Plugin};
 use summer_sea_orm::{DbConn, SeaOrmPlugin};
+use summer_web::{get, post};
+use summer_web::{
+    error::Result,
+    extractor::{Component, Query, Json},
+    axum::{
+        http::{HeaderMap, HeaderValue, StatusCode},
+        response::IntoResponse,
+    },
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const AP_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";
+const SECURITY_CONTEXT: &str = "https://w3id.org/security/v1";
+const AP_CONTENT_TYPE: &str = "application/activity+json";
+const WEBFINGER_CONTENT_TYPE: &str = "application/jrd+json";
+
+fn ap_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", HeaderValue::from_static(AP_CONTENT_TYPE));
+    headers
+}
 
 // ─── Shared federation data ───────────────────────────────────────────────────
 
-/// Application-wide data available to all ActivityPub [`Object`] and [`Activity`]
-/// trait implementations via [`activitypub_federation::config::Data`].
 #[derive(Clone)]
 pub struct FederationData {
-    /// SeaORM database connection pool.
     pub db: DbConn,
-    /// Public domain (e.g. `example.com` or `localhost:8080`).
     pub domain: String,
 }
 
-/// Global singleton set exactly once by [`FederationPlugin::build`].
 pub static FEDERATION: OnceLock<FederationConfig<Arc<FederationData>>> = OnceLock::new();
 
-/// Server-level keypair for signing outgoing HTTP requests.
 #[derive(Debug)]
 pub struct ServerKeypair {
     pub public_key: String,
@@ -49,25 +70,56 @@ pub struct ServerKeypair {
 
 pub static SERVER_KEYPAIR: OnceLock<ServerKeypair> = OnceLock::new();
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+/// Peer instance base URLs for activity delivery.
+pub static FEDERATION_PEERS: OnceLock<Vec<String>> = OnceLock::new();
 
-/// Convenience accessor – panics if the plugin has not been initialised.
+/// In-memory outbox storing activities sent by this instance.
+static OUTBOX: OnceLock<RwLock<Vec<Value>>> = OnceLock::new();
+
+/// In-memory inbox log storing activities received by this instance.
+static INBOX_LOG: OnceLock<RwLock<Vec<Value>>> = OnceLock::new();
+
+fn outbox() -> &'static RwLock<Vec<Value>> {
+    OUTBOX.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+fn inbox_log() -> &'static RwLock<Vec<Value>> {
+    INBOX_LOG.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+// ─── Convenience accessors ────────────────────────────────────────────────────
+
 pub fn federation_config() -> &'static FederationConfig<Arc<FederationData>> {
     FEDERATION
         .get()
         .expect("FederationPlugin must be added to the App before handling requests")
 }
 
-/// Convenience accessor to the inner [`FederationData`].
 pub fn federation_data() -> activitypub_federation::config::Data<Arc<FederationData>> {
     federation_config().to_request_data()
 }
 
-/// Convenience accessor for the server keypair.
 pub fn server_keypair() -> &'static ServerKeypair {
     SERVER_KEYPAIR
         .get()
         .expect("FederationPlugin must be added to the App before handling requests")
+}
+
+pub fn federation_peers() -> &'static [String] {
+    FEDERATION_PEERS
+        .get()
+        .map(|v| v.as_slice())
+        .unwrap_or(&[])
+}
+
+/// Read the outbox contents (for tests and the outbox endpoint).
+pub fn read_outbox() -> Vec<Value> {
+    outbox().read().unwrap().clone()
+}
+
+/// Read the inbox log (for tests).
+pub fn read_inbox_log() -> Vec<Value> {
+    inbox_log().read().unwrap().clone()
 }
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
@@ -86,6 +138,21 @@ impl Plugin for FederationPlugin {
 
         info!("ActivityPub federation domain: {}", domain);
 
+        // Parse peer URLs from FEDERATION_PEERS env var.
+        let peers: Vec<String> = std::env::var("FEDERATION_PEERS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if peers.is_empty() {
+            info!("No federation peers configured (set FEDERATION_PEERS)");
+        } else {
+            info!("Federation peers: {:?}", peers);
+        }
+        let _ = FEDERATION_PEERS.set(peers);
+
         let data = Arc::new(FederationData {
             db,
             domain: domain.clone(),
@@ -103,9 +170,6 @@ impl Plugin for FederationPlugin {
             panic!("FederationPlugin initialised twice");
         }
 
-        // Generate an ephemeral server keypair.
-        // In production this should be loaded from persistent storage to ensure
-        // stable HTTP-signature verification across restarts.
         let keypair = generate_actor_keypair().expect("failed to generate server keypair");
         if SERVER_KEYPAIR
             .set(ServerKeypair {
@@ -121,4 +185,478 @@ impl Plugin for FederationPlugin {
     fn dependencies(&self) -> Vec<&str> {
         vec![std::any::type_name::<SeaOrmPlugin>()]
     }
+}
+
+// ─── AP Event Publishing ──────────────────────────────────────────────────────
+
+/// Construct a Create activity for an entity.
+pub fn build_create_activity(entity_type: &str, entity_id: &str, data: &Value) -> Value {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+    let actor_url = format!("{}/ap/actor", base_url);
+    let activity_id = format!(
+        "{}/ap/activities/create-{}-{}-{}",
+        base_url,
+        entity_type,
+        entity_id,
+        Utc::now().timestamp_millis()
+    );
+
+    json!({
+        "@context": AP_CONTEXT,
+        "type": "Create",
+        "id": activity_id,
+        "actor": actor_url,
+        "published": Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "object": {
+            "@context": AP_CONTEXT,
+            "type": "Object",
+            "id": format!("{}/ap/{}/{}", base_url, entity_type, entity_id),
+            "attributedTo": actor_url,
+            "entityType": entity_type,
+            "entityId": entity_id,
+            "content": data,
+        }
+    })
+}
+
+/// Construct an Update activity for an entity.
+pub fn build_update_activity(entity_type: &str, entity_id: &str, data: &Value) -> Value {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+    let actor_url = format!("{}/ap/actor", base_url);
+    let activity_id = format!(
+        "{}/ap/activities/update-{}-{}-{}",
+        base_url,
+        entity_type,
+        entity_id,
+        Utc::now().timestamp_millis()
+    );
+
+    json!({
+        "@context": AP_CONTEXT,
+        "type": "Update",
+        "id": activity_id,
+        "actor": actor_url,
+        "published": Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "object": {
+            "@context": AP_CONTEXT,
+            "type": "Object",
+            "id": format!("{}/ap/{}/{}", base_url, entity_type, entity_id),
+            "attributedTo": actor_url,
+            "entityType": entity_type,
+            "entityId": entity_id,
+            "content": data,
+        }
+    })
+}
+
+/// Construct a Delete activity for an entity.
+pub fn build_delete_activity(entity_type: &str, entity_id: &str) -> Value {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+    let actor_url = format!("{}/ap/actor", base_url);
+    let activity_id = format!(
+        "{}/ap/activities/delete-{}-{}-{}",
+        base_url,
+        entity_type,
+        entity_id,
+        Utc::now().timestamp_millis()
+    );
+
+    json!({
+        "@context": AP_CONTEXT,
+        "type": "Delete",
+        "id": activity_id,
+        "actor": actor_url,
+        "published": Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "object": {
+            "type": "Tombstone",
+            "id": format!("{}/ap/{}/{}", base_url, entity_type, entity_id),
+            "entityType": entity_type,
+            "entityId": entity_id,
+        }
+    })
+}
+
+/// Publish an activity to all configured federation peers and record in outbox.
+///
+/// Sends an HTTP POST to each peer's server inbox (`/ap/actor/inbox`).
+/// Errors are logged but do not fail the operation (fire-and-forget).
+pub async fn publish_activity(activity: Value) {
+    // Record in outbox.
+    {
+        let mut ob = outbox().write().unwrap();
+        ob.push(activity.clone());
+    }
+
+    let peers = federation_peers();
+    if peers.is_empty() {
+        debug!("AP: No peers configured, activity stored in outbox only");
+        return;
+    }
+
+    let client = reqwest::Client::new();
+    for peer in peers {
+        let inbox_url = format!("{}/ap/actor/inbox", peer.trim_end_matches('/'));
+        debug!("AP: Delivering activity to peer inbox: {}", inbox_url);
+
+        let result = client
+            .post(&inbox_url)
+            .header("Content-Type", AP_CONTENT_TYPE)
+            .json(&activity)
+            .send()
+            .await;
+
+        match result {
+            Ok(resp) => {
+                if resp.status().is_success() || resp.status().as_u16() == 202 {
+                    debug!("AP: Successfully delivered to {}", inbox_url);
+                } else {
+                    warn!(
+                        "AP: Peer {} returned status {} for activity delivery",
+                        inbox_url,
+                        resp.status()
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("AP: Failed to deliver activity to {}: {}", inbox_url, e);
+            }
+        }
+    }
+}
+
+/// Convenience: build and publish a Create activity.
+pub async fn send_create_event(entity_type: &str, entity_id: &str, data: &Value) {
+    let activity = build_create_activity(entity_type, entity_id, data);
+    publish_activity(activity).await;
+}
+
+/// Convenience: build and publish an Update activity.
+pub async fn send_update_event(entity_type: &str, entity_id: &str, data: &Value) {
+    let activity = build_update_activity(entity_type, entity_id, data);
+    publish_activity(activity).await;
+}
+
+/// Convenience: build and publish a Delete activity.
+pub async fn send_delete_event(entity_type: &str, entity_id: &str) {
+    let activity = build_delete_activity(entity_type, entity_id);
+    publish_activity(activity).await;
+}
+
+// ─── Inbox Processing ─────────────────────────────────────────────────────────
+
+/// Process an incoming ActivityPub activity by applying it to the local database.
+async fn process_inbox_activity(db: &DbConn, activity: &Value) -> std::result::Result<(), String> {
+    let activity_type = activity
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let object = activity.get("object").ok_or("missing object")?;
+    let entity_type = object
+        .get("entityType")
+        .and_then(|v| v.as_str())
+        .ok_or("missing entityType in object")?;
+    let entity_id = object
+        .get("entityId")
+        .and_then(|v| v.as_str())
+        .ok_or("missing entityId in object")?;
+
+    debug!(
+        "AP inbox: processing {} for {} id={}",
+        activity_type, entity_type, entity_id
+    );
+
+    match activity_type {
+        "Create" => {
+            let content = object.get("content").ok_or("missing content in Create object")?;
+            process_create(db, entity_type, content).await
+        }
+        "Update" => {
+            let content = object.get("content").ok_or("missing content in Update object")?;
+            let id: i32 = entity_id.parse().map_err(|_| "invalid entity id")?;
+            process_update(db, entity_type, id, content).await
+        }
+        "Delete" => {
+            let id: i32 = entity_id.parse().map_err(|_| "invalid entity id")?;
+            process_delete(db, entity_type, id).await
+        }
+        _ => {
+            debug!("AP inbox: ignoring unsupported activity type '{}'", activity_type);
+            Ok(())
+        }
+    }
+}
+
+/// Insert a new entity from an incoming Create activity.
+async fn process_create(db: &DbConn, entity_type: &str, content: &Value) -> std::result::Result<(), String> {
+    match entity_type {
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% if macros.entity_has_protocol(entity, 'activitypub', protocols) | trim == 'true' -%}
+        "{{ entity.info.pluralName | kebab_case }}" => {
+            use crate::models::{{ rust_types.identifier(entity_name) }}::{{entity_name | pascal_case}}Create;
+            let create: {{entity_name | pascal_case}}Create = serde_json::from_value(content.clone())
+                .map_err(|e| format!("failed to parse {{ entity_name }} Create content: {}", e))?;
+            let active_model = create.into_active_model();
+            active_model.insert(db).await
+                .map_err(|e| format!("failed to insert {{ entity_name }}: {}", e))?;
+            Ok(())
+        }
+{% endif -%}
+{% endfor -%}
+        _ => {
+            debug!("AP inbox: unknown entity type '{}' for Create", entity_type);
+            Ok(())
+        }
+    }
+}
+
+/// Update an existing entity from an incoming Update activity.
+async fn process_update(db: &DbConn, entity_type: &str, id: i32, content: &Value) -> std::result::Result<(), String> {
+    match entity_type {
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% if macros.entity_has_protocol(entity, 'activitypub', protocols) | trim == 'true' -%}
+        "{{ entity.info.pluralName | kebab_case }}" => {
+            use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, {{entity_name | pascal_case}}Update};
+            Entity::find_by_id(id).one(db).await
+                .map_err(|e| format!("DB error: {}", e))?
+                .ok_or_else(|| format!("{{ entity_name }} {} not found", id))?;
+            let update: {{entity_name | pascal_case}}Update = serde_json::from_value(content.clone())
+                .map_err(|e| format!("failed to parse {{ entity_name }} Update content: {}", e))?;
+            let mut active_model = update.into_active_model();
+            active_model.id = Set(id);
+            active_model.update(db).await
+                .map_err(|e| format!("failed to update {{ entity_name }}: {}", e))?;
+            Ok(())
+        }
+{% endif -%}
+{% endfor -%}
+        _ => {
+            debug!("AP inbox: unknown entity type '{}' for Update", entity_type);
+            Ok(())
+        }
+    }
+}
+
+/// Delete an entity from an incoming Delete activity.
+async fn process_delete(db: &DbConn, entity_type: &str, id: i32) -> std::result::Result<(), String> {
+    match entity_type {
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% if macros.entity_has_protocol(entity, 'activitypub', protocols) | trim == 'true' -%}
+        "{{ entity.info.pluralName | kebab_case }}" => {
+            use crate::models::{{ rust_types.identifier(entity_name) }}::Entity;
+            use sea_orm::ModelTrait;
+            let model = Entity::find_by_id(id).one(db).await
+                .map_err(|e| format!("DB error: {}", e))?
+                .ok_or_else(|| format!("{{ entity_name }} {} not found", id))?;
+            model.delete(db).await
+                .map_err(|e| format!("failed to delete {{ entity_name }}: {}", e))?;
+            Ok(())
+        }
+{% endif -%}
+{% endfor -%}
+        _ => {
+            debug!("AP inbox: unknown entity type '{}' for Delete", entity_type);
+            Ok(())
+        }
+    }
+}
+
+// ─── WebFinger (RFC 7033) ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct WebFingerQuery {
+    pub resource: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebFingerResponse {
+    pub subject: String,
+    pub aliases: Vec<String>,
+    pub links: Vec<WebFingerLink>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebFingerLink {
+    pub rel: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub href: String,
+}
+
+#[get("/.well-known/webfinger")]
+pub async fn webfinger(Query(params): Query<WebFingerQuery>) -> Result<impl IntoResponse> {
+    debug!("WebFinger request for resource: {}", params.resource);
+
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+    let actor_url = format!("{}/ap/actor", base_url);
+
+    let response = WebFingerResponse {
+        subject: params.resource.clone(),
+        aliases: vec![actor_url.clone()],
+        links: vec![WebFingerLink {
+            rel: "self".to_string(),
+            kind: AP_CONTENT_TYPE.to_string(),
+            href: actor_url,
+        }],
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", HeaderValue::from_static(WEBFINGER_CONTENT_TYPE));
+    Ok((StatusCode::OK, headers, Json(response)))
+}
+
+// ─── Server-level actor ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerActor {
+    #[serde(rename = "@context")]
+    pub context: Value,
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub name: String,
+    pub preferred_username: String,
+    pub inbox: String,
+    pub outbox: String,
+    pub followers: String,
+    pub following: String,
+    pub url: String,
+    pub public_key: ActorPublicKey,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorPublicKey {
+    pub id: String,
+    pub owner: String,
+    pub public_key_pem: String,
+}
+
+#[get("/ap/actor")]
+pub async fn actor() -> Result<impl IntoResponse> {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+    let actor_id = format!("{}/ap/actor", base_url);
+    let kp = server_keypair();
+
+    let actor = ServerActor {
+        context: json!([AP_CONTEXT, SECURITY_CONTEXT]),
+        id: actor_id.clone(),
+        kind: "Application".to_string(),
+        name: "{{ project_name }}".to_string(),
+        preferred_username: "{{ project_name | snake_case }}".to_string(),
+        inbox: format!("{}/inbox", actor_id),
+        outbox: format!("{}/outbox", actor_id),
+        followers: format!("{}/followers", actor_id),
+        following: format!("{}/following", actor_id),
+        url: base_url,
+        public_key: ActorPublicKey {
+            id: format!("{}#main-key", actor_id),
+            owner: actor_id,
+            public_key_pem: kp.public_key.clone(),
+        },
+    };
+
+    Ok((StatusCode::OK, ap_headers(), Json(actor)))
+}
+
+// ─── Server Inbox / Outbox ────────────────────────────────────────────────────
+
+#[post("/ap/actor/inbox")]
+pub async fn server_inbox(
+    Component(db): Component<DbConn>,
+    Json(activity): Json<Value>,
+) -> Result<impl IntoResponse> {
+    let activity_type = activity
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let sender = activity
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    debug!("AP: Server inbox received {} from {}", activity_type, sender);
+
+    {
+        let mut log = inbox_log().write().unwrap();
+        log.push(activity.clone());
+    }
+
+    match process_inbox_activity(&db, &activity).await {
+        Ok(()) => {
+            debug!("AP: Successfully processed {} from {}", activity_type, sender);
+        }
+        Err(e) => {
+            warn!("AP: Failed to process {} from {}: {}", activity_type, sender, e);
+        }
+    }
+
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[get("/ap/actor/outbox")]
+pub async fn server_outbox() -> Result<impl IntoResponse> {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+    let items = read_outbox();
+
+    let body = json!({
+        "@context": AP_CONTEXT,
+        "id": format!("{}/ap/actor/outbox", base_url),
+        "type": "OrderedCollection",
+        "totalItems": items.len(),
+        "orderedItems": items,
+    });
+
+    Ok((StatusCode::OK, ap_headers(), Json(body)))
+}
+
+#[get("/ap/actor/inbox-log")]
+pub async fn inbox_log_endpoint() -> Result<impl IntoResponse> {
+    let items = read_inbox_log();
+
+    let body = json!({
+        "type": "InboxLog",
+        "totalItems": items.len(),
+        "items": items,
+    });
+
+    Ok((StatusCode::OK, ap_headers(), Json(body)))
+}
+
+#[get("/ap/actor/followers")]
+pub async fn server_followers() -> Result<impl IntoResponse> {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+
+    let body = json!({
+        "@context": AP_CONTEXT,
+        "id": format!("{}/ap/actor/followers", base_url),
+        "type": "OrderedCollection",
+        "totalItems": 0,
+        "orderedItems": [],
+    });
+
+    Ok((StatusCode::OK, ap_headers(), Json(body)))
+}
+
+#[get("/ap/actor/following")]
+pub async fn server_following() -> Result<impl IntoResponse> {
+    let domain = federation_config().domain();
+    let base_url = format!("https://{}", domain);
+
+    let body = json!({
+        "@context": AP_CONTEXT,
+        "id": format!("{}/ap/actor/following", base_url),
+        "type": "OrderedCollection",
+        "totalItems": 0,
+        "orderedItems": [],
+    });
+
+    Ok((StatusCode::OK, ap_headers(), Json(body)))
 }

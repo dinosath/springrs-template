@@ -3,6 +3,7 @@
 {% set entity_protos = entity.protocols | default(protocols) -%}
 {% if 'rest' in entity_protos -%}
 {% set model = entity_name | pascal_case -%}
+{% set ap_enabled = macros.entity_has_protocol(entity, 'activitypub', protocols) | trim == 'true' -%}
 use summer_web::{get, post, put, delete};
 use summer_web::{
     error::Result,
@@ -16,6 +17,9 @@ use serde::{Deserialize, Serialize};
 use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create,{{model}}Update,{{model}}Response};
 {% if authentication == 'jwt' -%}
 use crate::services::auth_plugin::AuthUser;
+{% endif -%}
+{% if ap_enabled -%}
+use crate::services::federation_plugin;
 {% endif -%}
 /**
 {% if entity.attributes | items | selectattr('1.type','equalto','relation') | length > 0 -%}
@@ -66,6 +70,13 @@ pub async fn create(Component(db): Component<DbConn>{% if authentication == 'jwt
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to insert item: {}", e)))?;
     debug!("Created {{ entity_name | snake_case }} with id: {:?}", model.id);
     let resp: {{model}}Response = model.into();
+{% if ap_enabled -%}
+    federation_plugin::send_create_event(
+        "{{ entity.info.pluralName | kebab_case }}",
+        &resp.id.to_string(),
+        &serde_json::to_value(&resp).unwrap_or_default(),
+    ).await;
+{% endif -%}
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
@@ -80,6 +91,13 @@ pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>{% if a
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(format!("failed to update item: {}", e)))?;
     debug!("Successfully updated {{ entity_name | snake_case }} with id: {}", id);
     let resp: {{model}}Response = model.into();
+{% if ap_enabled -%}
+    federation_plugin::send_update_event(
+        "{{ entity.info.pluralName | kebab_case }}",
+        &resp.id.to_string(),
+        &serde_json::to_value(&resp).unwrap_or_default(),
+    ).await;
+{% endif -%}
     Ok(Json(resp))
 }
 
@@ -91,6 +109,12 @@ pub async fn remove(Component(db): Component<DbConn>, Path(id): Path<i32>{% if a
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     debug!("Successfully deleted {{ entity_name | snake_case }} with id: {}", id);
+{% if ap_enabled -%}
+    federation_plugin::send_delete_event(
+        "{{ entity.info.pluralName | kebab_case }}",
+        &id.to_string(),
+    ).await;
+{% endif -%}
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -125,6 +149,15 @@ pub async fn batch_create(Component(db): Component<DbConn>{% if authentication =
     txn.commit().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     debug!("Batch created {} {{ entity.info.pluralName | kebab_case }}", responses.len());
+{% if ap_enabled -%}
+    for resp in &responses {
+        federation_plugin::send_create_event(
+            "{{ entity.info.pluralName | kebab_case }}",
+            &resp.id.to_string(),
+            &serde_json::to_value(resp).unwrap_or_default(),
+        ).await;
+    }
+{% endif -%}
     Ok((StatusCode::CREATED, Json(responses)))
 }
 
@@ -145,6 +178,15 @@ pub async fn batch_update(Component(db): Component<DbConn>{% if authentication =
     txn.commit().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     debug!("Batch updated {} {{ entity.info.pluralName | kebab_case }}", responses.len());
+{% if ap_enabled -%}
+    for resp in &responses {
+        federation_plugin::send_update_event(
+            "{{ entity.info.pluralName | kebab_case }}",
+            &resp.id.to_string(),
+            &serde_json::to_value(resp).unwrap_or_default(),
+        ).await;
+    }
+{% endif -%}
     Ok(Json(responses))
 }
 
@@ -152,11 +194,19 @@ pub async fn batch_update(Component(db): Component<DbConn>{% if authentication =
 pub async fn batch_delete(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(ids): Json<Vec<i32>>) -> Result<impl IntoResponse> {
     debug!("Batch deleting {} {{ entity.info.pluralName | kebab_case }}", ids.len());
     Entity::delete_many()
-        .filter(Column::Id.is_in(ids))
+        .filter(Column::Id.is_in(ids.clone()))
         .exec(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     debug!("Batch delete completed for {{ entity.info.pluralName | kebab_case }}");
+{% if ap_enabled -%}
+    for id in &ids {
+        federation_plugin::send_delete_event(
+            "{{ entity.info.pluralName | kebab_case }}",
+            &id.to_string(),
+        ).await;
+    }
+{% endif -%}
     Ok(StatusCode::NO_CONTENT)
 }
 {% else -%}

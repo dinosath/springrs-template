@@ -46,7 +46,7 @@ mod {{ entity_snake }}_grpc_tests {
         let mut request = server.post("/api/{{ entity.info.pluralName | default(entity_name | plural | snake_case) }}").json(&payload);
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        request = request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         let response = request.await;
         assert!(response.status_code().is_success(), "Fixture create failed: {}", response.status_code());

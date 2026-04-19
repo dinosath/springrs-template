@@ -1,24 +1,32 @@
 {% import "macros.jinja" as macros -%}
 {% import "rust/types.jinja" as rust_types -%}
-// ActivityPub protocol tests
+// ActivityPub federation tests
 //
-// Tests the ActivityPub endpoints: object retrieval, collections,
-// inbox, outbox, followers, following, and WebFinger discovery.
+// Tests that REST mutations (create, update, delete) generate correct
+// ActivityPub activities in the outbox, and that the server inbox can
+// receive and process incoming Create / Update / Delete activities from
+// federated peers.
+//
+// The tests simulate multi-instance federation by:
+// 1. Performing a REST mutation (representing "Instance A")
+// 2. Reading the outbox to capture the generated activity
+// 3. POSTing that activity to the server inbox (simulating "Instance B" receiving it)
+// 4. Verifying the inbox processed the activity correctly
 
 {% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
 {% set entity_protos = entity.protocols | default(protocols) -%}
-{% if 'activitypub' in entity_protos -%}
+{% if 'activitypub' in entity_protos and 'rest' in entity_protos -%}
 {% set entity_snake = entity_name | snake_case -%}
+{% set entity_pascal = entity_name | pascal_case -%}
 {% set entity_plural = entity.info.pluralName | default(entity_name | plural | snake_case) -%}
 {% set entity_plural_kebab = entity.info.pluralName | kebab_case -%}
 
-/// ActivityPub tests for {{ entity_name }}
-mod {{ entity_snake }}_activitypub_tests {
+/// Federation tests for {{ entity_name }}
+mod {{ entity_snake }}_federation_tests {
     use super::*;
 
-    /// Helper: create a {{ entity_snake }} via REST so we have something to test AP endpoints against.
+    /// Helper: create a {{ entity_snake }} via REST and return its JSON response.
     async fn create_{{ entity_snake }}_fixture(server: &TestServer) -> serde_json::Value {
-{% if 'rest' in entity_protos -%}
         let payload = json!({
 {% for attr_name, attr_prop in entity.attributes | items -%}
 {% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
@@ -41,222 +49,483 @@ mod {{ entity_snake }}_activitypub_tests {
 {% endfor -%}
         });
 
-        let mut request = server.post("/api/{{ entity_plural }}").json(&payload);
+        let mut request = server.post("/api/{{ entity_plural_kebab }}").json(&payload);
 {% if authentication != 'none' -%}
         let token = get_auth_token(server).await;
-        request = request.add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap());
+        request = request.add_header("Authorization", format!("Bearer {}", token));
 {% endif -%}
         let response = request.await;
         assert!(response.status_code().is_success(), "Fixture create failed: {}", response.status_code());
         response.json::<serde_json::Value>()
+    }
+
+    /// Helper: get the current outbox items.
+    async fn get_outbox(server: &TestServer) -> Vec<serde_json::Value> {
+        let response = server.get("/ap/actor/outbox").await;
+        assert!(response.status_code().is_success());
+        let body: serde_json::Value = response.json();
+        body["orderedItems"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Helper: get the current inbox log items.
+    async fn get_inbox_log(server: &TestServer) -> Vec<serde_json::Value> {
+        let response = server.get("/ap/actor/inbox-log").await;
+        assert!(response.status_code().is_success());
+        let body: serde_json::Value = response.json();
+        body["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Helper: find the last outbox activity matching the given type and entity type.
+    fn find_activity<'a>(
+        items: &'a [serde_json::Value],
+        activity_type: &str,
+        entity_type: &str,
+    ) -> Option<&'a serde_json::Value> {
+        items.iter().rev().find(|item| {
+            item["type"].as_str() == Some(activity_type)
+                && item.get("object")
+                    .and_then(|o| o.get("entityType"))
+                    .and_then(|v| v.as_str())
+                    == Some(entity_type)
+        })
+    }
+
+    // ── Outbox population tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_rest_create_populates_outbox() {
+        let server = init_test_server().await;
+        let outbox_before = get_outbox(server).await;
+        let _created = create_{{ entity_snake }}_fixture(server).await;
+        let outbox_after = get_outbox(server).await;
+
+        assert!(
+            outbox_after.len() > outbox_before.len(),
+            "Outbox should grow after REST create (before={}, after={})",
+            outbox_before.len(),
+            outbox_after.len()
+        );
+
+        let activity = find_activity(&outbox_after, "Create", "{{ entity_plural_kebab }}")
+            .expect("Outbox should contain a Create activity for {{ entity_plural_kebab }}");
+        assert_eq!(activity["type"], "Create");
+        assert!(activity["actor"].is_string());
+        assert!(activity["published"].is_string());
+        assert!(activity["object"]["content"].is_object(), "Create activity should carry entity data");
+    }
+
+    #[tokio::test]
+    async fn test_rest_update_populates_outbox() {
+        let server = init_test_server().await;
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let update_payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "ap_updated_{{ entity_snake }}@example.com",
 {% else -%}
-        // No REST endpoint for {{ entity_name }}; use GraphQL or direct DB insert
-        // for now return a placeholder – the AP object endpoints use their own IDs.
-        json!({"id": 1})
+            "{{ attr_name | snake_case }}": "AP Updated {{ attr_name | title }}",
 {% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(42) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ 'false' if attr_prop.default == 'true' else 'true' }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "AP Updated {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+{% if attr_prop.enum | length > 1 -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[1] | pascal_case }}",
+{% else -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let mut request = server.put(&format!("/api/{{ entity_plural_kebab }}/{}", id)).json(&update_payload);
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization", format!("Bearer {}", token));
+{% endif -%}
+        let response = request.await;
+        assert!(response.status_code().is_success(), "Update failed: {}", response.status_code());
+
+        let outbox = get_outbox(server).await;
+        let activity = find_activity(&outbox, "Update", "{{ entity_plural_kebab }}")
+            .expect("Outbox should contain an Update activity for {{ entity_plural_kebab }}");
+        assert_eq!(activity["type"], "Update");
+        assert_eq!(
+            activity["object"]["entityId"].as_str().unwrap(),
+            id.to_string().trim_matches('"'),
+            "Update activity should reference the correct entity ID"
+        );
     }
 
     #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_get_object() {
+    async fn test_rest_delete_populates_outbox() {
         let server = init_test_server().await;
         let created = create_{{ entity_snake }}_fixture(server).await;
         let id = &created["id"];
 
-        let response = server
-            .get(&format!("/ap/{{ entity_plural_kebab }}/{}", id))
-            .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
-            )
-            .await;
+        let mut request = server.delete(&format!("/api/{{ entity_plural_kebab }}/{}", id));
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization", format!("Bearer {}", token));
+{% endif -%}
+        let response = request.await;
+        assert_eq!(response.status_code().as_u16(), 204, "Delete failed: {}", response.status_code());
 
-        assert!(
-            response.status_code().is_success(),
-            "AP get_object for {{ entity_snake }} failed: status={}, body={:?}",
-            response.status_code(),
-            response.text()
+        let outbox = get_outbox(server).await;
+        let activity = find_activity(&outbox, "Delete", "{{ entity_plural_kebab }}")
+            .expect("Outbox should contain a Delete activity for {{ entity_plural_kebab }}");
+        assert_eq!(activity["type"], "Delete");
+        assert_eq!(activity["object"]["type"], "Tombstone");
+        assert_eq!(
+            activity["object"]["entityId"].as_str().unwrap(),
+            id.to_string().trim_matches('"'),
+            "Delete activity should reference the correct entity ID"
         );
-
-        let body: serde_json::Value = response.json();
-        assert_eq!(body["@context"], "https://www.w3.org/ns/activitystreams");
-        assert_eq!(body["type"], "Object");
-        assert!(body["id"].is_string(), "AP object should have an id string");
     }
 
-    #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_list_collection() {
-        let server = init_test_server().await;
-        // Ensure at least one entity exists
-        let _ = create_{{ entity_snake }}_fixture(server).await;
-
-        let response = server
-            .get("/ap/{{ entity_plural_kebab }}")
-            .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
-            )
-            .await;
-
-        assert!(
-            response.status_code().is_success(),
-            "AP list_collection for {{ entity_plural }} failed: status={}, body={:?}",
-            response.status_code(),
-            response.text()
-        );
-
-        let body: serde_json::Value = response.json();
-        assert_eq!(body["@context"], "https://www.w3.org/ns/activitystreams");
-        assert_eq!(body["type"], "OrderedCollection");
-        assert!(body["totalItems"].is_number(), "Expected totalItems in collection");
-        assert!(body["orderedItems"].is_array(), "Expected orderedItems array in collection");
-    }
+    // ── Inbox processing tests ───────────────────────────────────────────
 
     #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_outbox() {
+    async fn test_inbox_processes_create_from_peer() {
         let server = init_test_server().await;
-        let created = create_{{ entity_snake }}_fixture(server).await;
-        let id = &created["id"];
+        let inbox_before = get_inbox_log(server).await;
 
-        let response = server
-            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/outbox", id))
-            .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
-            )
-            .await;
-
-        assert!(
-            response.status_code().is_success(),
-            "AP outbox for {{ entity_snake }} failed: status={}, body={:?}",
-            response.status_code(),
-            response.text()
-        );
-
-        let body: serde_json::Value = response.json();
-        assert_eq!(body["@context"], "https://www.w3.org/ns/activitystreams");
-        assert_eq!(body["type"], "OrderedCollection");
-        assert!(body["orderedItems"].is_array());
-
-        // The outbox should contain at least one Create activity
-        let items = body["orderedItems"].as_array().unwrap();
-        if !items.is_empty() {
-            assert_eq!(items[0]["type"], "Create", "First outbox item should be a Create activity");
-            assert!(items[0]["object"].is_object(), "Create activity should contain an object");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_inbox_accepts_activity() {
-        let server = init_test_server().await;
-        let created = create_{{ entity_snake }}_fixture(server).await;
-        let id = &created["id"];
-
-        let activity = json!({
+        // Construct a Create activity as if from a remote peer
+        let create_activity = json!({
             "@context": "https://www.w3.org/ns/activitystreams",
-            "type": "Like",
-            "actor": "https://remote.example/users/alice",
-            "object": format!("https://localhost/ap/{{ entity_plural_kebab }}/{}", id),
+            "type": "Create",
+            "id": "https://remote.example/activities/create-{{ entity_snake }}-1",
+            "actor": "https://remote.example/ap/actor",
+            "published": "2025-01-01T00:00:00Z",
+            "object": {
+                "@context": "https://www.w3.org/ns/activitystreams",
+                "type": "Object",
+                "id": "https://remote.example/ap/{{ entity_plural_kebab }}/1",
+                "attributedTo": "https://remote.example/ap/actor",
+                "entityType": "{{ entity_plural_kebab }}",
+                "entityId": "1",
+                "content": {
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                    "{{ attr_name | snake_case }}": "inbox_create_{{ entity_snake }}@remote.example",
+{% else -%}
+                    "{{ attr_name | snake_case }}": "Inbox Create {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                    "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+                    "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+                    "{{ attr_name | snake_case }}": "Inbox Create {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+                    "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+                }
+            }
         });
 
         let response = server
-            .post(&format!("/ap/{{ entity_plural_kebab }}/{}/inbox", id))
-            .json(&activity)
+            .post("/ap/actor/inbox")
+            .json(&create_activity)
             .add_header(
-                "Content-Type".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
+                "Content-Type",
+                "application/activity+json",
             )
             .await;
 
         assert!(
             response.status_code().as_u16() == 202 || response.status_code().is_success(),
-            "AP inbox for {{ entity_snake }} should accept the activity: status={}, body={:?}",
-            response.status_code(),
-            response.text()
+            "Inbox should accept Create activity: status={}",
+            response.status_code()
+        );
+
+        // Verify inbox log grew
+        let inbox_after = get_inbox_log(server).await;
+        assert!(
+            inbox_after.len() > inbox_before.len(),
+            "Inbox log should grow after receiving Create activity"
         );
     }
 
     #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_inbox_rejects_unknown_entity() {
+    async fn test_inbox_processes_update_from_peer() {
         let server = init_test_server().await;
+        // First create an entity so the update has something to target
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = created["id"].as_i64().unwrap_or(1);
 
-        let activity = json!({
+        let update_activity = json!({
             "@context": "https://www.w3.org/ns/activitystreams",
-            "type": "Like",
-            "actor": "https://remote.example/users/alice",
-            "object": "https://localhost/ap/{{ entity_plural_kebab }}/999999",
+            "type": "Update",
+            "id": format!("https://remote.example/activities/update-{{ entity_snake }}-{}", id),
+            "actor": "https://remote.example/ap/actor",
+            "published": "2025-01-01T00:00:00Z",
+            "object": {
+                "@context": "https://www.w3.org/ns/activitystreams",
+                "type": "Object",
+                "id": format!("https://remote.example/ap/{{ entity_plural_kebab }}/{}", id),
+                "attributedTo": "https://remote.example/ap/actor",
+                "entityType": "{{ entity_plural_kebab }}",
+                "entityId": id.to_string(),
+                "content": {
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+                    "{{ attr_name | snake_case }}": "inbox_updated_{{ entity_snake }}@remote.example",
+{% else -%}
+                    "{{ attr_name | snake_case }}": "Inbox Updated {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+                    "{{ attr_name | snake_case }}": {{ attr_prop.default | default(99) }},
+{% elif attr_prop.type == 'boolean' -%}
+                    "{{ attr_name | snake_case }}": {{ 'false' if attr_prop.default == 'true' else 'true' }},
+{% elif attr_prop.type == 'text' -%}
+                    "{{ attr_name | snake_case }}": "Inbox Updated {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+{% if attr_prop.enum | length > 1 -%}
+                    "{{ attr_name | snake_case }}": "{{ attr_prop.enum[1] | pascal_case }}",
+{% else -%}
+                    "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+                }
+            }
         });
 
         let response = server
-            .post("/ap/{{ entity_plural_kebab }}/999999/inbox")
-            .json(&activity)
+            .post("/ap/actor/inbox")
+            .json(&update_activity)
             .add_header(
-                "Content-Type".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
+                "Content-Type",
+                "application/activity+json",
             )
             .await;
 
+        assert!(
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "Inbox should accept Update activity: status={}",
+            response.status_code()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inbox_processes_delete_from_peer() {
+        let server = init_test_server().await;
+        // Create an entity so the delete has something to target
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = created["id"].as_i64().unwrap_or(1);
+
+        let delete_activity = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Delete",
+            "id": format!("https://remote.example/activities/delete-{{ entity_snake }}-{}", id),
+            "actor": "https://remote.example/ap/actor",
+            "published": "2025-01-01T00:00:00Z",
+            "object": {
+                "type": "Tombstone",
+                "id": format!("https://remote.example/ap/{{ entity_plural_kebab }}/{}", id),
+                "entityType": "{{ entity_plural_kebab }}",
+                "entityId": id.to_string(),
+            }
+        });
+
+        let response = server
+            .post("/ap/actor/inbox")
+            .json(&delete_activity)
+            .add_header(
+                "Content-Type",
+                "application/activity+json",
+            )
+            .await;
+
+        assert!(
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "Inbox should accept Delete activity: status={}",
+            response.status_code()
+        );
+
+        // Verify the entity was deleted from the database
+        let mut get_request = server.get(&format!("/api/{{ entity_plural_kebab }}/{}", id));
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        get_request = get_request.add_header("Authorization", format!("Bearer {}", token));
+{% endif -%}
+        let get_response = get_request.await;
         assert_eq!(
-            response.status_code().as_u16(), 404,
-            "AP inbox should return 404 for non-existent entity, got: {}",
+            get_response.status_code().as_u16(), 404,
+            "Entity should be deleted after inbox processes Delete activity, got status={}",
+            get_response.status_code()
+        );
+    }
+
+    // ── Federation roundtrip tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_federation_create_roundtrip() {
+        let server = init_test_server().await;
+
+        // Instance A: create entity via REST
+        let created = create_{{ entity_snake }}_fixture(server).await;
+
+        // Capture the generated Create activity from the outbox
+        let outbox = get_outbox(server).await;
+        let create_activity = find_activity(&outbox, "Create", "{{ entity_plural_kebab }}")
+            .expect("Outbox should contain a Create activity");
+
+        // Instance B: receive the Create activity via inbox
+        let inbox_before = get_inbox_log(server).await;
+        let response = server
+            .post("/ap/actor/inbox")
+            .json(create_activity)
+            .add_header(
+                "Content-Type",
+                "application/activity+json",
+            )
+            .await;
+
+        assert!(
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "Inbox should accept the forwarded Create activity: status={}",
+            response.status_code()
+        );
+
+        let inbox_after = get_inbox_log(server).await;
+        assert!(
+            inbox_after.len() > inbox_before.len(),
+            "Inbox log should grow after federation roundtrip"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_federation_update_roundtrip() {
+        let server = init_test_server().await;
+
+        // Instance A: create and then update entity via REST
+        let created = create_{{ entity_snake }}_fixture(server).await;
+        let id = &created["id"];
+
+        let update_payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "roundtrip_updated_{{ entity_snake }}@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "Roundtrip Updated {{ attr_name | title }}",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(77) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ 'false' if attr_prop.default == 'true' else 'true' }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "Roundtrip Updated {{ attr_name | title }} content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+{% if attr_prop.enum | length > 1 -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[1] | pascal_case }}",
+{% else -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') | pascal_case }}",
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let mut request = server.put(&format!("/api/{{ entity_plural_kebab }}/{}", id)).json(&update_payload);
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization", format!("Bearer {}", token));
+{% endif -%}
+        let response = request.await;
+        assert!(response.status_code().is_success(), "Update failed: {}", response.status_code());
+
+        // Capture the Update activity from outbox
+        let outbox = get_outbox(server).await;
+        let update_activity = find_activity(&outbox, "Update", "{{ entity_plural_kebab }}")
+            .expect("Outbox should contain an Update activity");
+
+        // Instance B: receive the Update activity via inbox
+        let response = server
+            .post("/ap/actor/inbox")
+            .json(update_activity)
+            .add_header(
+                "Content-Type",
+                "application/activity+json",
+            )
+            .await;
+
+        assert!(
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "Inbox should accept the forwarded Update activity: status={}",
             response.status_code()
         );
     }
 
     #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_followers() {
+    async fn test_federation_delete_roundtrip() {
         let server = init_test_server().await;
+
+        // Instance A: create and then delete entity via REST
         let created = create_{{ entity_snake }}_fixture(server).await;
         let id = &created["id"];
 
+        let mut request = server.delete(&format!("/api/{{ entity_plural_kebab }}/{}", id));
+{% if authentication != 'none' -%}
+        let token = get_auth_token(server).await;
+        request = request.add_header("Authorization", format!("Bearer {}", token));
+{% endif -%}
+        let response = request.await;
+        assert_eq!(response.status_code().as_u16(), 204);
+
+        // Capture the Delete activity from outbox
+        let outbox = get_outbox(server).await;
+        let delete_activity = find_activity(&outbox, "Delete", "{{ entity_plural_kebab }}")
+            .expect("Outbox should contain a Delete activity");
+
+        // Instance B: receive the Delete activity via inbox
         let response = server
-            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/followers", id))
+            .post("/ap/actor/inbox")
+            .json(delete_activity)
             .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
+                "Content-Type",
+                "application/activity+json",
             )
             .await;
 
+        // The inbox may return 202 even if the entity doesn't exist locally
+        // (since Instance B might not have the entity). This is expected federation behaviour.
         assert!(
-            response.status_code().is_success(),
-            "AP followers for {{ entity_snake }} failed: status={}",
+            response.status_code().as_u16() == 202 || response.status_code().is_success(),
+            "Inbox should accept the forwarded Delete activity: status={}",
             response.status_code()
         );
-
-        let body: serde_json::Value = response.json();
-        assert_eq!(body["type"], "OrderedCollection");
-        assert!(body["totalItems"].is_number());
-    }
-
-    #[tokio::test]
-    async fn test_ap_{{ entity_snake }}_following() {
-        let server = init_test_server().await;
-        let created = create_{{ entity_snake }}_fixture(server).await;
-        let id = &created["id"];
-
-        let response = server
-            .get(&format!("/ap/{{ entity_plural_kebab }}/{}/following", id))
-            .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
-            )
-            .await;
-
-        assert!(
-            response.status_code().is_success(),
-            "AP following for {{ entity_snake }} failed: status={}",
-            response.status_code()
-        );
-
-        let body: serde_json::Value = response.json();
-        assert_eq!(body["type"], "OrderedCollection");
-        assert!(body["totalItems"].is_number());
     }
 }
 
 {% endif -%}
 {% endfor -%}
 
-/// Tests for ActivityPub discovery endpoints (WebFinger, server actor).
+/// Tests for ActivityPub discovery endpoints (WebFinger, server actor, outbox).
 mod activitypub_discovery_tests {
     use super::*;
 
@@ -286,8 +555,8 @@ mod activitypub_discovery_tests {
         let response = server
             .get("/ap/actor")
             .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
+                "Accept",
+                "application/activity+json",
             )
             .await;
 
@@ -321,8 +590,8 @@ mod activitypub_discovery_tests {
             .post("/ap/actor/inbox")
             .json(&activity)
             .add_header(
-                "Content-Type".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
+                "Content-Type",
+                "application/activity+json",
             )
             .await;
 
@@ -339,8 +608,8 @@ mod activitypub_discovery_tests {
         let response = server
             .get("/ap/actor/outbox")
             .add_header(
-                "Accept".parse().unwrap(),
-                "application/activity+json".parse().unwrap(),
+                "Accept",
+                "application/activity+json",
             )
             .await;
 
@@ -352,5 +621,21 @@ mod activitypub_discovery_tests {
 
         let body: serde_json::Value = response.json();
         assert_eq!(body["type"], "OrderedCollection");
+        assert!(body["orderedItems"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_server_inbox_log() {
+        let server = init_test_server().await;
+        let response = server.get("/ap/actor/inbox-log").await;
+
+        assert!(
+            response.status_code().is_success(),
+            "Inbox log endpoint failed: status={}",
+            response.status_code()
+        );
+
+        let body: serde_json::Value = response.json();
+        assert!(body["items"].is_array());
     }
 }
