@@ -2,6 +2,9 @@
 {% import "rust/types.jinja" as rust_types-%}
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+{% if 'rest' in protocols -%}
+use validator::Validate;
+{% endif -%}
 
 {% for name,property in entity.attributes | items | selectattr('1.enum') -%}
 #[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
@@ -42,7 +45,7 @@ pub struct Model {
 impl ActiveModelBehavior for ActiveModel {}
 
 /// Create struct — fields that the caller supplies; timestamps are auto-set by the server.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel{% if 'rest' in protocols %}, Validate{% endif %})]
 #[sea_orm(
     active_model = "ActiveModel",
     set(created_at = "chrono::Utc::now().naive_utc()"),
@@ -58,6 +61,7 @@ pub struct {{ entity_name | pascal_case }}Create {
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}{{ rust_types.rust_id_type(id_type) }}{% if not property.required %}>{% endif %},
     {%- elif property.type -%}
+    {{ macros.validator_attrs(name, property) }}
     pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
     {%- endif -%}
     {% endfor %}
@@ -65,7 +69,7 @@ pub struct {{ entity_name | pascal_case }}Create {
 
 /// Update struct — same writable fields as Create; `last_updated` is refreshed automatically.
 /// The `id` is taken from the URL path and injected by the controller after calling `into_active_model()`.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel{% if 'rest' in protocols %}, Validate{% endif %})]
 #[sea_orm(
     active_model = "ActiveModel",
     set(last_updated = "chrono::Utc::now().naive_utc()")
@@ -76,6 +80,7 @@ pub struct {{ entity_name | pascal_case }}Update {
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}{{ rust_types.rust_id_type(id_type) }}{% if not property.required %}>{% endif %},
     {%- elif property.type -%}
+    {{ macros.validator_attrs(name, property) }}
     pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
     {%- endif -%}
     {% endfor %}

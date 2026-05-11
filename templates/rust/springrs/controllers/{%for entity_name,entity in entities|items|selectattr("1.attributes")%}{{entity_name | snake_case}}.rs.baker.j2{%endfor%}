@@ -5,13 +5,14 @@
 use summer_web::{get, post, put, delete};
 use summer_web::{
     error::Result,
-    extractor::{Path, Component, Json},
+    extractor::{Path, Component, Json, Query},
     axum::{http::{HeaderMap, HeaderValue, StatusCode}, response::IntoResponse},
 };
-use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait, TransactionTrait, ColumnTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait, TransactionTrait, ColumnTrait, QueryFilter, PaginatorTrait, QuerySelect};
 use summer_sea_orm::DbConn;
 use summer::tracing::debug;
 use serde::{Deserialize, Serialize};
+use validator::Validate;
 use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create,{{model}}Update,{{model}}Response};
 {% if authentication == 'jwt' -%}
 use crate::services::auth_plugin::AuthUser;
@@ -24,6 +25,25 @@ use crate::services::tenant_plugin::{TenantId, set_tenant};
 use super::{ {%- for rel in macros.get_all_relations(entity)|split(',') %}{{ rust_types.identifier(rel| trim | snake_case)  }}::{{rel | pascal_case}} as {{ rel | trim | pascal_case}}{% if not loop.last %}, {% endif -%}{% endfor -%} };
 {% endif -%}
 **/
+
+/// Maximum number of items per page (hard cap).
+const MAX_PAGE_SIZE: u64 = 100;
+/// Maximum number of items allowed in batch operations.
+const MAX_BATCH_SIZE: usize = 100;
+
+/// Pagination query parameters for list endpoints.
+#[derive(Debug, Deserialize)]
+pub struct ListParams {
+    /// Page number (1-indexed, default: 1).
+    #[serde(default = "default_page")]
+    pub page: u64,
+    /// Items per page (default: 25, max: 100).
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+fn default_page() -> u64 { 1 }
+fn default_page_size() -> u64 { 25 }
+
 async fn load_item<C>(
     db: &C,
     id: i32,
@@ -40,21 +60,32 @@ where
 }
 
 #[get("/api/{{ entity.info.pluralName | kebab_case }}")]
-pub async fn list(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse> {
+pub async fn list(Component(db): Component<DbConn>, Query(params): Query<ListParams>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse> {
     debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
+    let page_size = params.page_size.min(MAX_PAGE_SIZE);
+    let page = params.page.max(1);
+    let offset = (page.saturating_sub(1)) * page_size;
     {% if entity_rls -%}
     let txn = db.begin().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     set_tenant(&txn, &tenant).await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
+    let total = Entity::find().count(&txn).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     let models = Entity::find()
+        .limit(page_size)
+        .offset(offset)
         .all(&txn)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     txn.commit().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     {% else -%}
+    let total = Entity::find().count(&db).await
+        .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
     let models = Entity::find()
+        .limit(page_size)
+        .offset(offset)
         .all(&db)
         .await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
@@ -62,18 +93,22 @@ pub async fn list(Component(db): Component<DbConn>{% if authentication == 'jwt' 
     debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
     let responses: Vec<{{ entity_name | pascal_case }}Response> = models.into_iter().map(Into::into).collect();
 
-    let total = responses.len() as u64;
-    let start: u64 = 0;
-    let end: u64 = if total == 0 { 0 } else { total - 1 };
+    let count = responses.len() as u64;
+    let start: u64 = offset;
+    let end: u64 = if count == 0 { start } else { start + count - 1 };
     let mut headers = HeaderMap::new();
     let content_range_value = format!("items {}-{}/{}", start, end, total);
-    headers.insert("Content-Range", HeaderValue::from_str(&content_range_value).unwrap());
+    if let Ok(val) = HeaderValue::from_str(&content_range_value) {
+        headers.insert("Content-Range", val);
+    }
     headers.insert("Accept-Ranges", HeaderValue::from_static("items"));
     Ok((StatusCode::OK, headers, Json(responses)))
 }
 
 #[post("/api/{{ entity.info.pluralName | kebab_case }}")]
 pub async fn create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse> {
+    create.validate()
+        .map_err(|e| summer_web::error::KnownWebError::bad_request(e.to_string()))?;
     debug!("Creating new {{ entity_name | snake_case }} - Request: {:?}",create);
     {% if entity_rls -%}
     let mut create = create;
@@ -101,6 +136,8 @@ pub async fn create(Component(db): Component<DbConn>{% if authentication == 'jwt
 
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/{id}")]
 pub async fn update(Component(db): Component<DbConn>, Path(id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse> {
+    update.validate()
+        .map_err(|e| summer_web::error::KnownWebError::bad_request(e.to_string()))?;
     debug!("Updating {{ entity_name | snake_case }} with id: {}", id);
     {% if entity_rls -%}
     let txn = db.begin().await
@@ -180,6 +217,11 @@ pub struct {{model}}BatchUpdateItem {
 
 #[post("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
 pub async fn batch_create(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(items): Json<Vec<{{model}}Create>>) -> Result<impl IntoResponse> {
+    if items.len() > MAX_BATCH_SIZE {
+        return Err(summer_web::error::KnownWebError::bad_request(
+            format!("batch size {} exceeds maximum of {}", items.len(), MAX_BATCH_SIZE)
+        ).into());
+    }
     debug!("Batch creating {} {{ entity.info.pluralName | kebab_case }}", items.len());
     let txn = db.begin().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
@@ -206,6 +248,11 @@ pub async fn batch_create(Component(db): Component<DbConn>{% if authentication =
 
 #[put("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
 pub async fn batch_update(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(items): Json<Vec<{{model}}BatchUpdateItem>>) -> Result<impl IntoResponse> {
+    if items.len() > MAX_BATCH_SIZE {
+        return Err(summer_web::error::KnownWebError::bad_request(
+            format!("batch size {} exceeds maximum of {}", items.len(), MAX_BATCH_SIZE)
+        ).into());
+    }
     debug!("Batch updating {} {{ entity.info.pluralName | kebab_case }}", items.len());
     let txn = db.begin().await
         .map_err(|e| summer_web::error::KnownWebError::internal_server_error(e.to_string()))?;
@@ -230,6 +277,11 @@ pub async fn batch_update(Component(db): Component<DbConn>{% if authentication =
 
 #[delete("/api/{{ entity.info.pluralName | kebab_case }}/batch")]
 pub async fn batch_delete(Component(db): Component<DbConn>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(ids): Json<Vec<i32>>) -> Result<impl IntoResponse> {
+    if ids.len() > MAX_BATCH_SIZE {
+        return Err(summer_web::error::KnownWebError::bad_request(
+            format!("batch size {} exceeds maximum of {}", ids.len(), MAX_BATCH_SIZE)
+        ).into());
+    }
     debug!("Batch deleting {} {{ entity.info.pluralName | kebab_case }}", ids.len());
     {% if entity_rls -%}
     let txn = db.begin().await

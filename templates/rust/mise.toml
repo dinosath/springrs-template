@@ -50,3 +50,29 @@ run = [{ task = "generate"},{ task = "test" }]
 [tasks.all]
 description = "Generate and build all samples"
 depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc", "rest-rls"]
+
+[tasks.clippy]
+description = "Run clippy on a generated variant"
+run = "(cd generated/$ANSWER && cargo clippy --all-targets -- -D warnings)"
+
+[tasks.fmt-check]
+description = "Check formatting on a generated variant"
+run = "(cd generated/$ANSWER && cargo fmt -- --check)"
+
+[tasks.audit]
+description = "Run cargo-audit on a generated variant"
+run = "(cd generated/$ANSWER && cargo audit)"
+
+[tasks.clippy-all]
+description = "Run clippy on all generated variants"
+run = """
+for variant in rest rest-jwt rest-rls; do
+  echo "=== clippy: $variant ==="
+  ANSWER=$variant mise run clippy || exit 1
+done
+"""
+
+[tasks.security-test]
+description = "Generate rest-rls and run security/RLS tests"
+env.ANSWER = "rest-rls"
+run = [{ task = "generate" }, { task = "test" }]

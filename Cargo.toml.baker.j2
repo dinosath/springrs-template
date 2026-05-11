@@ -40,8 +40,15 @@ sea-orm = { version = "2.0.0-rc.37", features = ["sqlx-postgres","runtime-tokio-
 {% endif -%}
 {{ 'summer-web = {git="https://github.com/dinosath/spring-rs", branch="master"}' if 'rest' in protocols }}
 {{ 'static-serve = "0.5"' if frontend != 'none' }}
+{% if row_level_security -%}
+axum-tenant = { version = "0.1", features = ["axum", "sea-orm-2"] }
+{% endif -%}
+{% if 'rest' in protocols -%}
+tower-http = { version = "0.6", features = ["set-header"{% if security_level | default('standard') == 'hardened' %}, "limit", "cors"{% endif %}] }
+validator = { version = "0.19", features = ["derive"] }
+{% endif -%}
 {% if authentication == 'jwt' and 'rest' in protocols -%}
-webgates = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
+webgates = { git = "https://github.com/emirror-de/webgates", branch = "nightly", features = ["authn", "codecs"] }
 webgates-axum = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
 webgates-repositories = { git = "https://github.com/emirror-de/webgates", branch = "nightly" }
 {% endif -%}

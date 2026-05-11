@@ -17,9 +17,11 @@ use summer_web::{
     extractor::Json,
 };
 use webgates::{
-    authn::{LoginResult, LoginService},
+    authn::login::{LoginResult, LoginService},
     codecs::jwt::RegisteredClaims,
-    prelude::{Credentials, Group, Role},
+    credentials::Credentials,
+    groups::Group,
+    roles::Role,
 };
 use webgates_repositories::services::account_insert::AccountInsertService;
 

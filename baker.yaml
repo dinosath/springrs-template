@@ -35,7 +35,7 @@ questions:
   authentication:
     type: str
     help: What authentication method do you want to use?
-    default: none
+    default: jwt
     choices:
       - jwt
       - oidc
@@ -65,6 +65,14 @@ questions:
     help: Enable PostgreSQL Row-Level Security (RLS) for multi-tenant data isolation?
     default: false
     ask_if: database == 'postgres'
+
+  security_level:
+    type: str
+    help: "Security hardening level: standard (headers only) or hardened (adds CORS, rate limiting, request size limits)"
+    default: standard
+    choices:
+      - standard
+      - hardened
 
   id_type:
     type: str

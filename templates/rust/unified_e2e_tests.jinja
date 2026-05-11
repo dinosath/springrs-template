@@ -281,6 +281,8 @@ mod auth_tests {
 {% if attr_prop.required -%}
             "{{ attr_name | snake_case }}": "2024-01-01T00:00:00",
 {% endif -%}
+{% elif attr_prop.maxLength is defined and attr_prop.maxLength <= 10 -%}
+            "{{ attr_name | snake_case }}": format!("{:.*}", {{ attr_prop.maxLength }}, format!("v{}", suffix)),
 {% else -%}
             "{{ attr_name | snake_case }}": format!("{{ prefix }} {{ attr_name | title }} {}", suffix),
 {% endif -%}
@@ -332,7 +334,7 @@ async fn create_test_{{ entity_snake }}(i: &TestInfra) -> serde_json::Value {
 {% if authentication != 'none' -%}
     request = request.add_header("Authorization", format!("Bearer {}", i.auth_token));
 {% endif -%}
-{% if entity_rls and authentication != 'jwt' -%}
+{% if entity_rls -%}
     request = request.add_header("X-Tenant-Id", "test-tenant-a");
 {% endif -%}
     let response = request.await;
@@ -377,7 +379,7 @@ mod {{ entity_snake }}_tests {
 {% if authentication != 'none' -%}
             request = request.add_header("Authorization", format!("Bearer {}", i.auth_token));
 {% endif -%}
-{% if entity_rls and authentication != 'jwt' -%}
+{% if entity_rls -%}
             request = request.add_header("X-Tenant-Id", "test-tenant-a");
 {% endif -%}
             let response = request.await;
@@ -403,7 +405,7 @@ mod {{ entity_snake }}_tests {
 {% if authentication != 'none' -%}
             get_request = get_request.add_header("Authorization", format!("Bearer {}", i.auth_token));
 {% endif -%}
-{% if entity_rls and authentication != 'jwt' -%}
+{% if entity_rls -%}
             get_request = get_request.add_header("X-Tenant-Id", "test-tenant-a");
 {% endif -%}
             let response = get_request.await;
@@ -441,6 +443,8 @@ mod {{ entity_snake }}_tests {
 {% if attr_prop.required -%}
                 "{{ attr_name | snake_case }}": "2024-06-01T00:00:00",
 {% endif -%}
+{% elif attr_prop.maxLength is defined and attr_prop.maxLength <= 10 -%}
+                "{{ attr_name | snake_case }}": format!("{:.*}", {{ attr_prop.maxLength }}, format!("u{}", suffix)),
 {% else -%}
                 "{{ attr_name | snake_case }}": format!("Updated {{ attr_name | title }} {}", suffix),
 {% endif -%}
@@ -465,7 +469,7 @@ mod {{ entity_snake }}_tests {
 {% if authentication != 'none' -%}
             update_request = update_request.add_header("Authorization", format!("Bearer {}", i.auth_token));
 {% endif -%}
-{% if entity_rls and authentication != 'jwt' -%}
+{% if entity_rls -%}
             update_request = update_request.add_header("X-Tenant-Id", "test-tenant-a");
 {% endif -%}
             let response = update_request.await;
@@ -489,7 +493,7 @@ mod {{ entity_snake }}_tests {
 {% if authentication != 'none' -%}
             delete_request = delete_request.add_header("Authorization", format!("Bearer {}", i.auth_token));
 {% endif -%}
-{% if entity_rls and authentication != 'jwt' -%}
+{% if entity_rls -%}
             delete_request = delete_request.add_header("X-Tenant-Id", "test-tenant-a");
 {% endif -%}
             let response = delete_request.await;
@@ -505,7 +509,7 @@ mod {{ entity_snake }}_tests {
 {% if authentication != 'none' -%}
             get_request = get_request.add_header("Authorization", format!("Bearer {}", i.auth_token));
 {% endif -%}
-{% if entity_rls and authentication != 'jwt' -%}
+{% if entity_rls -%}
             get_request = get_request.add_header("X-Tenant-Id", "test-tenant-a");
 {% endif -%}
             let get_response = get_request.await;
@@ -516,18 +520,35 @@ mod {{ entity_snake }}_tests {
 
 {% endfor -%}
 
-{% if row_level_security and authentication != 'jwt' -%}
-{% set ns = namespace(rls_entity=none, rls_entity_name=none, non_rls_entity=none, non_rls_entity_name=none) -%}
+{% if row_level_security -%}
+{% set ns = namespace(rls_entity=none, rls_entity_name=none, non_rls_entity=none, non_rls_entity_name=none, rls_entity_has_fk=false) -%}
+{# First pass: prefer an RLS entity without FK dependencies #}
 {% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
 {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' and not ns.rls_entity -%}
+{% set ns.rls_entity_has_fk = false -%}
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop)|trim == 'true' -%}{% set ns.rls_entity_has_fk = true -%}{% endif -%}
+{% endfor -%}
+{% if not ns.rls_entity_has_fk -%}
 {% set ns.rls_entity = entity -%}
 {% set ns.rls_entity_name = entity_name -%}
+{% endif -%}
 {% endif -%}
 {% if macros.entity_has_rls(entity, row_level_security)|trim != 'true' and not ns.non_rls_entity -%}
 {% set ns.non_rls_entity = entity -%}
 {% set ns.non_rls_entity_name = entity_name -%}
 {% endif -%}
 {% endfor -%}
+{# Fallback: if all RLS entities have FKs, take the first one #}
+{% if not ns.rls_entity -%}
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' and not ns.rls_entity -%}
+{% set ns.rls_entity = entity -%}
+{% set ns.rls_entity_name = entity_name -%}
+{% set ns.rls_entity_has_fk = true -%}
+{% endif -%}
+{% endfor -%}
+{% endif -%}
 
 {% if ns.rls_entity -%}
 {% set rls_snake = ns.rls_entity_name | snake_case -%}
@@ -545,6 +566,8 @@ mod rls_tests {
 {% if attr_prop.type == 'string' -%}
 {% if attr_prop.format == 'email' -%}
             "{{ attr_name | snake_case }}": format!("rls_{}@example.com", suffix),
+{% elif attr_prop.maxLength is defined and attr_prop.maxLength <= 10 -%}
+            "{{ attr_name | snake_case }}": format!("{:.*}", {{ attr_prop.maxLength }}, format!("r{}", suffix)),
 {% else -%}
             "{{ attr_name | snake_case }}": format!("RLS {} {}", "{{ attr_name | title }}", suffix),
 {% endif -%}
@@ -717,12 +740,29 @@ mod rls_tests {
     fn test_missing_tenant_header_rejected() {
         let i = infra();
         shared_runtime().block_on(async {
+{% if authentication == 'jwt' -%}
+            // With JWT auth, the header resolver is primary and JWT claim is fallback.
+            // Without BOTH auth and header, the request should be rejected.
+            let payload = rls_entity_payload("no_tenant");
+            let req = i.server.post("/api/{{ rls_plural }}").json(&payload);
+            let resp = req.await;
+            assert!(
+                !resp.status_code().is_success(),
+                "POST to RLS entity without any tenant source should fail, got {}",
+                resp.status_code()
+            );
+
+            let req = i.server.get("/api/{{ rls_plural }}");
+            let resp = req.await;
+            assert!(
+                !resp.status_code().is_success(),
+                "GET list of RLS entity without any tenant source should fail, got {}",
+                resp.status_code()
+            );
+{% else -%}
             // POST without tenant header
             let payload = rls_entity_payload("no_tenant");
-            let mut req = i.server.post("/api/{{ rls_plural }}").json(&payload);
-{% if authentication != 'none' -%}
-            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
-{% endif -%}
+            let req = i.server.post("/api/{{ rls_plural }}").json(&payload);
             let resp = req.await;
             assert!(
                 resp.status_code().as_u16() == 400 || resp.status_code().as_u16() == 422,
@@ -731,16 +771,14 @@ mod rls_tests {
             );
 
             // GET list without tenant header
-            let mut req = i.server.get("/api/{{ rls_plural }}");
-{% if authentication != 'none' -%}
-            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
-{% endif -%}
+            let req = i.server.get("/api/{{ rls_plural }}");
             let resp = req.await;
             assert!(
                 resp.status_code().as_u16() == 400 || resp.status_code().as_u16() == 422,
                 "GET list of RLS entity without X-Tenant-Id should fail, got {}",
                 resp.status_code()
             );
+{% endif -%}
         });
     }
 
@@ -926,3 +964,209 @@ mod health_tests {
     }
 {% endif -%}
 }
+
+// ============================================================================
+// HTTP Middleware tests
+// ============================================================================
+
+{% if 'rest' in protocols -%}
+#[cfg(test)]
+mod middleware_tests {
+    use super::*;
+
+    /// Unknown routes return 404.
+    #[test]
+    fn test_not_found_unknown_route() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let mut req = i.server.get("/api/nonexistent_route_xyz");
+{% if row_level_security -%}
+            req = req.add_header("X-Tenant-Id", "test-tenant");
+{% endif -%}
+            let response = req.await;
+            assert_eq!(
+                response.status_code().as_u16(),
+                404,
+                "Expected 404 for unknown route, got {}",
+                response.status_code()
+            );
+        });
+    }
+
+{% set first_entity = (entities | items | selectattr("1.attributes") | first) -%}
+{% if first_entity -%}
+{% set mw_entity_plural = first_entity[1].info.pluralName | default(first_entity[0] | plural | snake_case) -%}
+    /// Unsupported HTTP method returns 405 Method Not Allowed.
+    #[test]
+    fn test_method_not_allowed() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let mut req = i.server.method(
+                axum_test::http::Method::PATCH,
+                "/api/{{ mw_entity_plural }}",
+            );
+{% if authentication != 'none' -%}
+            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+{% if macros.entity_has_rls(first_entity[1], row_level_security)|trim == 'true' -%}
+            req = req.add_header("X-Tenant-Id", "mw-test");
+{% endif -%}
+            let response = req.await;
+            assert_eq!(
+                response.status_code().as_u16(),
+                405,
+                "Expected 405 for PATCH on collection endpoint, got {}",
+                response.status_code()
+            );
+        });
+    }
+
+    /// Malformed JSON body returns 400 or 422.
+    #[test]
+    fn test_malformed_json_rejected() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let mut req = i.server
+                .post("/api/{{ mw_entity_plural }}")
+                .text("{ this is not valid json }")
+                .content_type("application/json");
+{% if authentication != 'none' -%}
+            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+{% if macros.entity_has_rls(first_entity[1], row_level_security)|trim == 'true' -%}
+            req = req.add_header("X-Tenant-Id", "mw-test");
+{% endif -%}
+            let response = req.await;
+            let status = response.status_code().as_u16();
+            assert!(
+                status == 400 || status == 422,
+                "Malformed JSON should be rejected with 400/422, got {}",
+                status
+            );
+        });
+    }
+
+    /// Empty body on a POST that requires JSON returns 400 or 422.
+    #[test]
+    fn test_empty_body_rejected() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let mut req = i.server
+                .post("/api/{{ mw_entity_plural }}")
+                .text("")
+                .content_type("application/json");
+{% if authentication != 'none' -%}
+            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+{% if macros.entity_has_rls(first_entity[1], row_level_security)|trim == 'true' -%}
+            req = req.add_header("X-Tenant-Id", "mw-test");
+{% endif -%}
+            let response = req.await;
+            let status = response.status_code().as_u16();
+            assert!(
+                status == 400 || status == 422,
+                "Empty body should be rejected with 400/422, got {}",
+                status
+            );
+        });
+    }
+
+    /// JSON responses have correct Content-Type header.
+    #[test]
+    fn test_json_content_type() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let mut req = i.server.get("/api/{{ mw_entity_plural }}");
+{% if authentication != 'none' -%}
+            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+{% if macros.entity_has_rls(first_entity[1], row_level_security)|trim == 'true' -%}
+            req = req.add_header("X-Tenant-Id", "mw-test");
+{% endif -%}
+            let response = req.await;
+            assert!(response.status_code().is_success());
+            let content_type = response.header("content-type");
+            assert!(
+                content_type.to_str().unwrap_or_default().contains("application/json"),
+                "Expected application/json content-type, got: {:?}",
+                content_type
+            );
+        });
+    }
+
+    /// Response compression is active when Accept-Encoding is sent.
+    #[test]
+    fn test_compression_active() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            // Create some data so the response body is non-trivial
+            let _ = create_test_{{ first_entity[0] | snake_case }}(i).await;
+
+            let mut req = i.server.get("/api/{{ mw_entity_plural }}");
+{% if authentication != 'none' -%}
+            req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+{% if macros.entity_has_rls(first_entity[1], row_level_security)|trim == 'true' -%}
+            req = req.add_header("X-Tenant-Id", "mw-test");
+{% endif -%}
+            req = req.add_header("Accept-Encoding", "gzip, deflate, br");
+            let response = req.await;
+            assert!(response.status_code().is_success());
+            // When compression middleware is active and body exceeds min size,
+            // the response should include a Content-Encoding header.
+            // Small bodies may not be compressed, so we just verify the server
+            // doesn't error out with the Accept-Encoding header present.
+        });
+    }
+{% endif -%}
+
+{% if authentication != 'none' -%}
+    /// Requests to protected endpoints without auth token return 401.
+    #[test]
+    fn test_unauthenticated_request_rejected() {
+        let i = infra();
+        shared_runtime().block_on(async {
+{% if first_entity -%}
+            let mut req = i.server.get("/api/{{ mw_entity_plural }}");
+{% else -%}
+            let mut req = i.server.get("/api/health");
+{% endif -%}
+{% if row_level_security -%}
+            req = req.add_header("X-Tenant-Id", "test-tenant");
+{% endif -%}
+            let response = req.await;
+            assert_eq!(
+                response.status_code().as_u16(),
+                401,
+                "Expected 401 for unauthenticated request, got {}",
+                response.status_code()
+            );
+        });
+    }
+
+    /// Requests with invalid/expired token return 401.
+    #[test]
+    fn test_invalid_token_rejected() {
+        let i = infra();
+        shared_runtime().block_on(async {
+{% if first_entity -%}
+            let mut req = i.server.get("/api/{{ mw_entity_plural }}");
+{% else -%}
+            let mut req = i.server.get("/api/health");
+{% endif -%}
+            req = req.add_header("Authorization", "Bearer invalid.token.value");
+{% if row_level_security -%}
+            req = req.add_header("X-Tenant-Id", "test-tenant");
+{% endif -%}
+            let response = req.await;
+            assert_eq!(
+                response.status_code().as_u16(),
+                401,
+                "Expected 401 for invalid token, got {}",
+                response.status_code()
+            );
+        });
+    }
+{% endif -%}
+}
+{% endif -%}

@@ -136,3 +136,37 @@
 {%- endfor -%}
 {{ 'true' if ns.found else 'false' }}
 {%- endmacro -%}
+
+{# ---- Validation helpers (for `validator` crate attributes) ---- #}
+
+{#- Generate #[validate(...)] attribute for a property based on schema constraints. -#}
+{%- macro validator_attrs(name, property) -%}
+{%- set parts = [] -%}
+{%- if property.maxLength is defined and property.maxLength is not none -%}
+    {%- if property.minLength is defined and property.minLength is not none -%}
+        {%- set parts = parts + ['length(min = ' ~ property.minLength ~ ', max = ' ~ property.maxLength ~ ')'] -%}
+    {%- else -%}
+        {%- set parts = parts + ['length(max = ' ~ property.maxLength ~ ')'] -%}
+    {%- endif -%}
+{%- elif property.minLength is defined and property.minLength is not none -%}
+    {%- set parts = parts + ['length(min = ' ~ property.minLength ~ ')'] -%}
+{%- endif -%}
+{%- if property.format is defined and property.format == 'email' -%}
+    {%- set parts = parts + ['email'] -%}
+{%- endif -%}
+{%- if property.format is defined and property.format == 'url' -%}
+    {%- set parts = parts + ['url'] -%}
+{%- endif -%}
+{%- if property.minimum is defined and property.minimum is not none -%}
+    {%- if property.maximum is defined and property.maximum is not none -%}
+        {%- set parts = parts + ['range(min = ' ~ property.minimum ~ ', max = ' ~ property.maximum ~ ')'] -%}
+    {%- else -%}
+        {%- set parts = parts + ['range(min = ' ~ property.minimum ~ ')'] -%}
+    {%- endif -%}
+{%- elif property.maximum is defined and property.maximum is not none -%}
+    {%- set parts = parts + ['range(max = ' ~ property.maximum ~ ')'] -%}
+{%- endif -%}
+{%- if parts | length > 0 -%}
+    #[validate({{ parts | join(', ') }})]
+{%- endif -%}
+{%- endmacro -%}

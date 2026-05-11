@@ -3,6 +3,7 @@
     "authentication": "jwt",
     "database": "postgres",
     "row_level_security": false,
+    "security_level": "standard",
     "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm"],
     "protocols": ["rest"],
