@@ -1,0 +1,128 @@
+{% import "macros.jinja" as macros-%}
+{% import "rust/types.jinja" as rust_types-%}
+use sea_orm::entity::prelude::*;
+use serde::{Deserialize, Serialize};
+{% if 'rest' in protocols -%}
+use validator::Validate;
+{% endif -%}
+
+{% for name,property in entity.attributes | items | selectattr('1.enum') -%}
+#[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)", enum_name = "{{ name | snake_case }}")]
+pub enum {{ name | pascal_case }}{
+    {% for enum in property.enum -%}
+    {{ '#[default]' if (property.default and enum == property.default) or (not property.default and loop.first) }}
+    #[sea_orm(string_value = "{{ enum | snake_case }}")]
+    #[serde(rename = "{{ enum }}")]
+    {{ rust_types.rust_var(enum,true) }}{%- if not loop.last -%},{% endif %}
+    {% endfor %}
+}
+{% endfor %}
+
+#[sea_orm::model]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel)]
+#[sea_orm(table_name = "{{ entity_name | table_case }}")]
+pub struct Model {
+    #[sea_orm(primary_key)]
+    pub id: {{ rust_types.rust_id_type(id_type) }},
+    pub created_at: DateTime,
+    pub last_updated: DateTime,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    pub tenant_id: String,
+    {% endif -%}
+    {% for name, property in entity.attributes | items -%}
+    {{ rust_types.seaorm_derive(name, property) | trim -}}
+    {% if property.type == 'relation' -%}
+    {% set has_many = macros.relation_is_many_to_many(property) == 'true' or macros.relation_is_one_to_many(property) == 'true' %}
+    {% set seaorm_wrapper = 'HasMany' if has_many else 'HasOne' -%}
+    pub {{ rust_types.rust_var(name, false) }}: {{ seaorm_wrapper ~ '<super::' ~ rust_types.rust_var(rust_types.get_rust_primitive(name, property) | snake_case, false) ~ '::Entity>' }},
+    {% else -%}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {% endif -%}
+    {% endfor %}
+}
+
+impl ActiveModelBehavior for ActiveModel {}
+
+/// Create struct — fields that the caller supplies; timestamps are auto-set by the server.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel{% if 'rest' in protocols %}, Validate{% endif %})]
+#[sea_orm(
+    active_model = "ActiveModel",
+    set(created_at = "chrono::Utc::now().naive_utc()"),
+    set(last_updated = "chrono::Utc::now().naive_utc()")
+)]
+pub struct {{ entity_name | pascal_case }}Create {
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    #[serde(skip_deserializing)]
+    pub tenant_id: String,
+    {% endif -%}
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}{{ rust_types.rust_id_type(id_type) }}{% if not property.required %}>{% endif %},
+    {%- elif property.type -%}
+    {{ macros.validator_attrs(name, property) }}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+/// Update struct — same writable fields as Create; `last_updated` is refreshed automatically.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel{% if 'rest' in protocols %}, Validate{% endif %})]
+#[sea_orm(
+    active_model = "ActiveModel",
+    set(last_updated = "chrono::Utc::now().naive_utc()")
+)]
+pub struct {{ entity_name | pascal_case }}Update {
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}{{ rust_types.rust_id_type(id_type) }}{% if not property.required %}>{% endif %},
+    {%- elif property.type -%}
+    {{ macros.validator_attrs(name, property) }}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+/// Response struct — all readable fields returned to the client.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct {{ entity_name | pascal_case }}Response {
+    pub id: {{ rust_types.rust_id_type(id_type) }},
+    pub created_at: DateTime,
+    pub last_updated: DateTime,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    pub tenant_id: String,
+    {% endif -%}
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}{{ rust_types.rust_id_type(id_type) }}{% if not property.required %}>{% endif %},
+    {%- elif property.type -%}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+impl From<Model> for {{ entity_name | pascal_case }}Response {
+    fn from(model: Model) -> Self {
+        Self {
+            id: model.id,
+            created_at: model.created_at,
+            last_updated: model.last_updated,
+            {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+            tenant_id: model.tenant_id,
+            {% endif -%}
+            {% for name, property in entity.attributes | items -%}
+            {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+            {{ name | snake_case }}_id: model.{{ name | snake_case }}_id,
+            {%- elif property.type -%}
+            {{ rust_types.rust_var(name, false) }}: model.{{ rust_types.rust_var(name, false) }},
+            {%- endif -%}
+            {% endfor %}
+        }
+    }
+}

@@ -1,0 +1,16 @@
+{% import "rust/types.jinja" as rust_types -%}
+{% set left = relation | split("_") | first -%}
+{% set right = relation | split("_") | last -%}
+{% set file_name = relation | snake_case %}
+use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Queryable, Selectable, Identifiable, Insertable, Associations)]
+#[diesel(table_name = crate::models::schema::{{ file_name }})]
+#[diesel(primary_key({{ left | snake_case }}_id, {{ right | snake_case }}_id))]
+#[diesel(belongs_to(super::{{ rust_types.identifier(left) }}::{{ left | pascal_case }}, foreign_key = {{ left | snake_case }}_id))]
+#[diesel(belongs_to(super::{{ rust_types.identifier(right) }}::{{ right | pascal_case }}, foreign_key = {{ right | snake_case }}_id))]
+pub struct {{ left | pascal_case }}{{ right | pascal_case }} {
+    pub {{ left | snake_case }}_id: i32,
+    pub {{ right | snake_case }}_id: i32,
+}

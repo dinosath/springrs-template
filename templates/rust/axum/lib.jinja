@@ -1,0 +1,130 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+{% if 'rest' in protocols -%}
+mod controllers;
+{% endif -%}
+{% if database != 'none' -%}
+pub mod models {
+    automod::dir!(pub "src/models");
+}
+pub mod app_state;
+{% endif -%}
+pub mod services {
+    automod::dir!(pub "src/services");
+}
+{% if frontend == 'leptos' -%}
+use static_serve::embed_assets;
+
+embed_assets!("frontend/dist", compress = true);
+
+pub fn leptos_router() -> axum::Router{% if database != 'none' %}<app_state::AppState>{% endif %} {
+    use axum::{
+        body::Body,
+        http::{header, StatusCode},
+        response::Response,
+        routing::get,
+    };
+    static INDEX: &[u8] =
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/frontend/dist/index.html"));
+
+    static_router().fallback(get(|| async move {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(Body::from(INDEX))
+            .expect("failed to build fallback response")
+    }))
+}
+{% elif frontend != 'none' -%}
+use static_serve::embed_assets;
+
+embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
+{% endif -%}
+
+/// Build the axum [`Router`] with all routes and middleware.
+pub fn build_router({% if database != 'none' %}state: app_state::AppState{% endif %}) -> axum::Router {
+    use axum::http::HeaderValue;
+    use axum::http::header;
+    use tower_http::set_header::SetResponseHeaderLayer;
+
+    {% if 'rest' in protocols -%}
+    let mut router = axum::Router::new()
+        .merge(controllers::routes())
+        {% if frontend == 'leptos' -%}
+        .merge(leptos_router())
+        {% elif frontend != 'none' -%}
+        .merge(static_router())
+        {% endif -%}
+        {% if database != 'none' -%}
+        .with_state(state)
+        {% endif -%}
+        ;
+    {% else -%}
+    let mut router = axum::Router::new()
+        {% if database != 'none' -%}
+        .with_state(state)
+        {% endif -%}
+        ;
+    {% endif -%}
+
+    // ─── Security headers (always applied) ──────────────────────────────
+    router = router
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-xss-protection"),
+            HeaderValue::from_static("1; mode=block"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-download-options"),
+            HeaderValue::from_static("noopen"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ));
+{% if security_level | default('standard') == 'hardened' %}
+    // ─── Hardened: request body size limit ───────────────────────────────
+    router = router.layer(tower_http::limit::RequestBodyLimitLayer::new(2 * 1024 * 1024)); // 2 MB
+
+    // ─── Hardened: CORS strict origin ────────────────────────────────────
+    use tower_http::cors::{CorsLayer, AllowOrigin};
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(
+            std::env::var("CORS_ORIGINS")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse::<HeaderValue>().ok())
+                .collect::<Vec<_>>(),
+        ))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::HeaderName::from_static("x-tenant-id")])
+        .max_age(std::time::Duration::from_secs(3600));
+    router = router.layer(cors);
+{% endif %}
+
+    router
+}
+
+{% if 'rest' in protocols -%}
+/// Build the fully-initialised axum [`Router`] for testing.
+pub async fn create_app() -> anyhow::Result<axum::Router> {
+    {% if database != 'none' -%}
+    let state = app_state::AppState::new().await;
+    {% endif -%}
+    Ok(build_router({% if database != 'none' %}state{% endif %}))
+}
+{% endif -%}

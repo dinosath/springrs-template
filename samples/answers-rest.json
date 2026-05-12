@@ -1,5 +1,7 @@
 {
     "project_name": "sample_app",
+    "backend": "spring-rs",
+    "orm": "seaorm",
     "authentication": "none",
     "database": "postgres",
     "row_level_security": false,

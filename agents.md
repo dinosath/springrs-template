@@ -8,8 +8,9 @@ For agents working on a generated project, see the `agents.md` rendered inside t
 ## What this repo is
 
 `springrs-template` is a [baker](https://github.com/aliev/baker) code-generation template that
-scaffolds production-ready Rust backend services (using the **summer** / spring-rs framework,
-SeaORM, axum, optional gRPC, Helm, and frontend kits) from a single JSON answers file.
+scaffolds production-ready Rust backend services (supporting **axum** standalone or the **summer** /
+spring-rs framework, with Diesel or SeaORM, optional gRPC, Helm, and frontend kits) from a single
+JSON answers file.
 
 ---
 
@@ -173,9 +174,11 @@ These variables are available in all `.baker.j2` templates and conditional path 
 | `project_author` | str | — | |
 | `project_version` | str | `0.1.0` | |
 | `project_edition` | str | `2021` | Rust edition |
+| `backend` | str | `axum` | `axum` or `spring-rs` |
+| `orm` | str | `diesel` | `diesel` or `seaorm` |
 | `authentication` | str | `none` | `jwt`, `oidc`, or `none` |
 | `database` | str | `postgres` | Only `postgres` currently |
-| `use_seaorm_migrations` | bool | `true` | Only when database==postgres |
+| `use_seaorm_migrations` | bool | `true` | Only when database==postgres and orm==seaorm |
 | `db_schema` | str | `public` | PostgreSQL schema name |
 | `row_level_security` | bool | `false` | Multi-tenant RLS (requires postgres) |
 | `id_type` | str | `integer` | `integer`, `uuid`, or `big_integer` |

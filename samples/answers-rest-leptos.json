@@ -1,5 +1,7 @@
 {
     "project_name": "sample_leptos_app",
+    "backend": "spring-rs",
+    "orm": "seaorm",
     "authentication": "jwt",
     "database": "postgres",
     "row_level_security": false,

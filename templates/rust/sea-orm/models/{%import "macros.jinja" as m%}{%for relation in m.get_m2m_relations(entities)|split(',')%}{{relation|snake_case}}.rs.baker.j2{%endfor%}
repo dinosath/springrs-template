@@ -1,22 +1,7 @@
-{% import "rust/types.jinja" as rust_types -%}
-{% if relation|trim=='' -%}{% continue -%}{% endif -%}
-{% set left = relation | split("_") | first -%}
-{% set right = relation | split("_") | last -%}
-{% set file_name = relation | snake_case %}
-use sea_orm::entity::prelude::*;
-
-#[sea_orm::model]
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "{{ file_name }}")]
-pub struct Model {
-    #[sea_orm(primary_key, auto_increment = false)]
-    pub {{ left | snake_case }}_id: i32,
-    #[sea_orm(primary_key, auto_increment = false)]
-    pub {{ right | snake_case }}_id: i32,
-    #[sea_orm(belongs_to, from = "{{ left | snake_case }}_id", to = "id")]
-    pub {{ left | snake_case }}: Option<super::{{ rust_types.identifier(left) }}::Entity>,
-    #[sea_orm(belongs_to, from = "{{ right | snake_case }}_id", to = "id")]
-    pub {{ right | snake_case }}: Option<super::{{ rust_types.identifier(right) }}::Entity>,
-}
-
-impl ActiveModelBehavior for ActiveModel {}
+{% if relation|trim != '' -%}
+{% if orm == 'seaorm' -%}
+{% include "rust/sea-orm/m2m_entity.jinja" %}
+{%- elif orm == 'diesel' -%}
+{% include "rust/diesel/m2m_entity.jinja" %}
+{%- endif %}
+{%- endif %}

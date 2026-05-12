@@ -1,0 +1,52 @@
+{% import "macros.jinja" as macros-%}
+{% import "rust/types.jinja" as rust_types-%}
+// @generated automatically by Diesel CLI.
+// This file is a template that generates the diesel schema.
+// In production, use `diesel print-schema` to regenerate.
+
+{% for name,property in entity.attributes | items | selectattr('1.enum') -%}
+pub mod sql_types {
+    #[derive(diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
+    #[diesel(postgres_type(name = "{{ name | snake_case }}"))]
+    pub struct {{ name | pascal_case }};
+}
+{% endfor %}
+
+diesel::table! {
+    {% for name,property in entity.attributes | items | selectattr('1.enum') -%}
+    use super::sql_types::{{ name | pascal_case }};
+    {% endfor -%}
+    use diesel::sql_types::*;
+
+    {{ entity_name | table_case }} (id) {
+        id -> Int4,
+        created_at -> Timestamp,
+        last_updated -> Timestamp,
+        {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+        tenant_id -> Varchar,
+        {% endif -%}
+        {% for name, property in entity.attributes | items -%}
+        {%- if property.type == 'relation' -%}
+        {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+        {{ name | snake_case }}_id -> {% if not property.required %}Nullable<{% endif %}Int4{% if not property.required %}>{% endif %},
+        {%- endif -%}
+        {%- elif property.type == 'string' -%}
+        {%- if property.enum -%}
+        {{ rust_types.rust_var(name, false) }} -> {{ name | pascal_case }},
+        {%- else -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Varchar{% if not property.required %}>{% endif %},
+        {%- endif -%}
+        {%- elif property.type == 'boolean' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Bool{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'integer' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Int4{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'number' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Float8{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'datetime' or property.type == 'timestamp' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Timestamp{% if not property.required %}>{% endif %},
+        {%- elif property.type -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Varchar{% if not property.required %}>{% endif %},
+        {%- endif -%}
+        {% endfor %}
+    }
+}

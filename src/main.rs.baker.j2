@@ -1,39 +1,5 @@
-use mimalloc::MiMalloc;
-{{ 'use summer_grpc::GrpcPlugin;' if 'grpc' in protocols }}
-{{ 'use summer::{auto_config, App};' if 'rest' in protocols else 'use summer::App;' }}
-{{ 'use summer_sea_orm::{SeaOrmPlugin};' if database != 'none' }}
-{{ 'use summer_opentelemetry::{KeyValue, OpenTelemetryPlugin, ResourceConfigurator, SERVICE_NAME, SERVICE_VERSION, };' if 'open-telemetry' in features }}
-{{ 'use summer_web::{WebConfigurator, WebPlugin};' if 'rest' in protocols }}
-{{ 'use ' ~ project_name|snake_case ~ '::services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if use_seaorm_migrations }}
-{% if row_level_security -%}
-use {{ project_name | snake_case }}::services::tenant_plugin::TenantPlugin;
-{% endif -%}
-{% if authentication == 'jwt' and 'rest' in protocols -%}
-use {{ project_name | snake_case }}::services::auth_plugin::AuthPlugin;
-{% endif -%}
-
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
-{{ '#[auto_config(WebConfigurator)]' if 'rest' in protocols -}}
-#[tokio::main]
-async fn main() {
-    App::new()
-        .opentelemetry_attrs([
-            KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
-            KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
-        ])
-        {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' }}
-        {{ '.add_plugin(AuthPlugin)' if authentication == 'jwt' and 'rest' in protocols }}
-        {{ '.add_plugin(TenantPlugin)' if row_level_security }}
-        {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
-        {{ '.add_plugin(WebPlugin)' if 'rest' in protocols }}
-        {{ '.add_plugin(OpenTelemetryPlugin)' if 'open-telemetry' in features }}
-        {{ '.add_plugin(GrpcPlugin)' if 'grpc' in protocols }}
-        {% if frontend == 'leptos' -%}
-        .add_router({{ project_name | snake_case }}::leptos_router())
-        {% elif frontend != 'none' -%}
-        .add_router({{ project_name | snake_case }}::static_router())
-        {% endif -%}
-        .run().await
-}
+{% if backend == 'spring-rs' -%}
+{% include "rust/springrs/main.jinja" %}
+{%- elif backend == 'axum' -%}
+{% include "rust/axum/main.jinja" %}
+{%- endif %}

@@ -47,6 +47,11 @@ description = "Generate and build rest sample with Row-Level Security"
 env.ANSWER = "rest-rls"
 run = [{ task = "generate"},{ task = "test" }]
 
+[tasks.axum-diesel]
+description = "Generate and build axum+diesel+jwt+shadcn sample"
+env.ANSWER = "axum-diesel"
+run = [{ task = "generate"},{ task = "e2e" }]
+
 [tasks.all]
 description = "Generate and build all samples"
 depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc", "rest-rls"]

@@ -1,0 +1,42 @@
+{% if orm == 'seaorm' -%}
+use sea_orm::DatabaseConnection;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: DatabaseConnection,
+}
+
+impl AppState {
+    pub async fn new() -> Self {
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
+        let db = sea_orm::Database::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+        Self { db }
+    }
+}
+{% elif orm == 'diesel' -%}
+use diesel::r2d2::{self, ConnectionManager};
+use diesel::PgConnection;
+
+pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: Pool,
+}
+
+impl AppState {
+    pub async fn new() -> Self {
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
+        let manager = ConnectionManager::<PgConnection>::new(&database_url);
+        let pool = r2d2::Pool::builder()
+            .max_size(10)
+            .build(manager)
+            .expect("failed to create database pool");
+        Self { pool }
+    }
+}
+{% endif -%}

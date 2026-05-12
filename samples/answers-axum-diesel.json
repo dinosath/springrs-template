@@ -1,16 +1,16 @@
 {
-    "project_name": "sample_rls_app",
-    "backend": "spring-rs",
-    "orm": "seaorm",
+    "project_name": "sample_axum_diesel",
+    "backend": "axum",
+    "orm": "diesel",
     "authentication": "jwt",
     "database": "postgres",
-    "row_level_security": true,
+    "row_level_security": false,
     "security_level": "standard",
-    "use_sqlx_migrations": true,
+    "use_seaorm_migrations": false,
+    "use_sqlx_migrations": false,
     "features": ["open-telemetry", "helm"],
     "protocols": ["rest"],
-    "static_includes": [],
-    "include_in_dockerfile": "config",
+    "frontend": "shadcn-admin-kit",
     "entities": {
         "Profile": {
             "kind": "collectionType",
@@ -90,12 +90,11 @@
             "kind": "collectionType",
             "collectionName": "categories",
             "priority": 1,
-            "rls": false,
             "info": {
                 "displayName": "Category",
                 "singularName": "category",
                 "pluralName": "categories",
-                "description": "Categories for organizing articles – shared across tenants"
+                "description": "Categories for organizing articles"
             },
             "attributes": {
                 "name": {
@@ -132,12 +131,11 @@
             "kind": "collectionType",
             "collectionName": "tags",
             "priority": 1,
-            "rls": false,
             "info": {
                 "displayName": "Tag",
                 "singularName": "tag",
                 "pluralName": "tags",
-                "description": "Tags for labeling articles – shared across tenants"
+                "description": "Tags for labeling articles"
             },
             "attributes": {
                 "name": {
@@ -168,7 +166,7 @@
                 "displayName": "Article",
                 "singularName": "article",
                 "pluralName": "articles",
-                "description": "Blog articles – tenant-scoped"
+                "description": "Blog articles"
             },
             "attributes": {
                 "title": {
@@ -243,7 +241,7 @@
                 "displayName": "Comment",
                 "singularName": "comment",
                 "pluralName": "comments",
-                "description": "Article comments – tenant-scoped"
+                "description": "Article comments"
             },
             "attributes": {
                 "content": {

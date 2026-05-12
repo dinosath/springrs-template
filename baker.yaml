@@ -32,6 +32,22 @@ questions:
     help: Please enter the edition of the project
     default: "2021"
 
+  backend:
+    type: str
+    help: What backend framework do you want to use?
+    default: axum
+    choices:
+      - axum
+      - spring-rs
+
+  orm:
+    type: str
+    help: What ORM do you want to use?
+    default: diesel
+    choices:
+      - diesel
+      - seaorm
+
   authentication:
     type: str
     help: What authentication method do you want to use?
@@ -52,7 +68,7 @@ questions:
     type: bool
     help: Do you want to use SeaORM migrations?
     default: true
-    ask_if: database == 'postgres'
+    ask_if: database == 'postgres' and orm == 'seaorm'
 
   db_schema:
     type: str

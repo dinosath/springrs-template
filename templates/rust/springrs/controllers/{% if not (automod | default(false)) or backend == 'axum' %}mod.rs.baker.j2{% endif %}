@@ -1,0 +1,3 @@
+{% if backend == 'axum' -%}
+{% include "rust/axum/controllers_mod.jinja" %}
+{%- endif %}
