@@ -1,8 +1,7 @@
 {% import "macros.jinja" as macros-%}
 {% import "rust/types.jinja" as rust_types-%}
 use diesel::prelude::*;
-use chrono::NaiveDateTime;
-type DateTime = NaiveDateTime;
+use chrono::{NaiveDateTime, NaiveDate};
 use serde::{Deserialize, Serialize};
 {% if 'rest' in protocols -%}
 use validator::Validate;
@@ -31,12 +30,16 @@ pub struct {{ entity_name | pascal_case }} {
     pub tenant_id: String,
     {% endif -%}
     {% for name, property in entity.attributes | items -%}
+    {%- set col_name = rust_types.rust_var(name, false) -%}
+    {%- set field_name = col_name if col_name != (entity_name | table_case) else '_' ~ col_name -%}
     {%- if property.type == 'relation' -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
     {%- endif -%}
     {%- elif property.type -%}
-    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {% if field_name != col_name %}#[serde(rename = "{{ col_name }}")]
+    {% endif -%}
+    pub {{ field_name }}: {{ rust_types.get_rust_type(name, property) }},
     {%- endif -%}
     {% endfor %}
 }
@@ -49,12 +52,16 @@ pub struct New{{ entity_name | pascal_case }} {
     pub tenant_id: String,
     {% endif -%}
     {% for name, property in entity.attributes | items -%}
+    {%- set col_name = rust_types.rust_var(name, false) -%}
+    {%- set field_name = col_name if col_name != (entity_name | table_case) else '_' ~ col_name -%}
     {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
     {%- elif property.type -%}
     {{ macros.validator_attrs(name, property) }}
-    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {% if field_name != col_name %}#[serde(rename = "{{ col_name }}")]
+    {% endif -%}
+    pub {{ field_name }}: {{ rust_types.get_rust_type(name, property) }},
     {%- endif -%}
     {% endfor %}
 }
@@ -66,12 +73,16 @@ pub type {{ entity_name | pascal_case }}Create = New{{ entity_name | pascal_case
 #[diesel(table_name = crate::models::schema::{{ entity_name | table_case }})]
 pub struct {{ entity_name | pascal_case }}Update {
     {% for name, property in entity.attributes | items -%}
+    {%- set col_name = rust_types.rust_var(name, false) -%}
+    {%- set field_name = col_name if col_name != (entity_name | table_case) else '_' ~ col_name -%}
     {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
     {%- elif property.type -%}
     {{ macros.validator_attrs(name, property) }}
-    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {% if field_name != col_name %}#[serde(rename = "{{ col_name }}")]
+    {% endif -%}
+    pub {{ field_name }}: {{ rust_types.get_rust_type(name, property) }},
     {%- endif -%}
     {% endfor %}
 }
@@ -106,12 +117,14 @@ impl From<{{ entity_name | pascal_case }}> for {{ entity_name | pascal_case }}Re
             tenant_id: model.tenant_id,
             {% endif -%}
             {% for name, property in entity.attributes | items -%}
+            {%- set col_name = rust_types.rust_var(name, false) -%}
+            {%- set field_name = col_name if col_name != (entity_name | table_case) else '_' ~ col_name -%}
             {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
             {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
             {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
             {{ name | snake_case }}_id: model.{{ name | snake_case }}_id,
             {%- elif property.type -%}
-            {{ rust_types.rust_var(name, false) }}: model.{{ rust_types.rust_var(name, false) }},
+            {{ col_name }}: model.{{ field_name }},
             {%- endif -%}
             {% endfor %}
         }

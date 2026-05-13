@@ -18,30 +18,42 @@ diesel::table! {
         tenant_id -> Varchar,
         {% endif -%}
         {% for name, property in entity.attributes | items -%}
+        {%- set col_name = rust_types.rust_var(name, false) -%}
+        {%- set table_name = entity_name | table_case -%}
+        {%- set safe_name = col_name if col_name != table_name else '_' ~ col_name -%}
+        {%- if col_name == table_name and property.type != 'relation' %}
+        #[sql_name = "{{ col_name }}"]
+        {%- endif -%}
         {%- if property.type == 'relation' -%}
         {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
         {{ name | snake_case }}_id -> {% if not property.required %}Nullable<{% endif %}Int4{% if not property.required %}>{% endif %},
         {%- endif -%}
         {%- elif property.type == 'string' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Varchar{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Varchar{% if not property.required %}>{% endif %},
         {%- elif property.type == 'text' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Text{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Text{% if not property.required %}>{% endif %},
         {%- elif property.type == 'integer' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Int4{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Int4{% if not property.required %}>{% endif %},
         {%- elif property.type == 'biginteger' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Int8{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Int8{% if not property.required %}>{% endif %},
         {%- elif property.type == 'float' or property.type == 'decimal' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Float8{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Float8{% if not property.required %}>{% endif %},
         {%- elif property.type == 'boolean' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Bool{% if not property.required %}>{% endif %},
-        {%- elif property.type == 'datetime' or property.type == 'date' or property.type == 'time' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Timestamp{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Bool{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'datetime' -%}
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Timestamp{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'date' -%}
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Date{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'time' -%}
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Time{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'email' -%}
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Varchar{% if not property.required %}>{% endif %},
         {%- elif property.type == 'enumeration' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}{{ name | pascal_case }}Mapping{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}{{ name | pascal_case }}Mapping{% if not property.required %}>{% endif %},
         {%- elif property.type == 'json' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Jsonb{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Jsonb{% if not property.required %}>{% endif %},
         {%- elif property.type == 'uid' -%}
-        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Uuid{% if not property.required %}>{% endif %},
+        {{ safe_name }} -> {% if not property.required %}Nullable<{% endif %}Uuid{% if not property.required %}>{% endif %},
         {%- endif -%}
         {% endfor %}
     }

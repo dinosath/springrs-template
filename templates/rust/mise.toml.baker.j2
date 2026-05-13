@@ -24,19 +24,19 @@ jq --argjson entities "$entities_json" '.entities = $entities' answers.json > tm
 
 [tasks.generate-local]
 description = "Generate the project files from local repo"
-run = "baker generate ../springrs-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all --verbose"
+run = "baker ../saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
 sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
 [tasks.generate]
 description = "Generate the project files"
-run = "baker generate https://github.com/dinosath/springrs-template . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all --verbose"
+run = "baker https://github.com/dinosath/saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
 sources = ['.baker/**/*.json']
 depends = ["merge-entities"]
 
 [tasks.baker-update]
 description = "Update the project files from generated repo"
-run = "baker update --non-interactive --skip-confirms all --verbose"
+run = "baker update --non-interactive --skip-confirms all"
 sources = ['.baker/**/*.json']
 
 {% if frontend == 'leptos' %}

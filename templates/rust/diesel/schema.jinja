@@ -34,8 +34,14 @@ diesel::table! {
         {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Float8{% if not property.required %}>{% endif %},
         {%- elif property.type == 'boolean' -%}
         {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Bool{% if not property.required %}>{% endif %},
-        {%- elif property.type == 'datetime' or property.type == 'date' or property.type == 'time' -%}
+        {%- elif property.type == 'datetime' -%}
         {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Timestamp{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'date' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Date{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'time' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Time{% if not property.required %}>{% endif %},
+        {%- elif property.type == 'email' -%}
+        {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}Varchar{% if not property.required %}>{% endif %},
         {%- elif property.type == 'enumeration' -%}
         {{ rust_types.rust_var(name, false) }} -> {% if not property.required %}Nullable<{% endif %}{{ name | pascal_case }}Mapping{% if not property.required %}>{% endif %},
         {%- elif property.type == 'json' -%}

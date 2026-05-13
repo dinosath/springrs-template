@@ -77,6 +77,8 @@
         {%- else -%}
             f64
         {%- endif -%}
+    {%- elif property.type == 'decimal' or property.type == 'float' -%}
+        f64
     {%- else -%}
         String
     {%- endif -%}

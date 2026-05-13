@@ -64,11 +64,10 @@ questions:
     choices:
       - postgres
 
-  use_seaorm_migrations:
+  add_migrations:
     type: bool
-    help: Do you want to use SeaORM migrations?
+    help: Do you want to add migrations?
     default: true
-    ask_if: database == 'postgres' and orm == 'seaorm'
 
   db_schema:
     type: str
