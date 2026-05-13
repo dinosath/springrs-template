@@ -1,0 +1,28 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types %}
+
+{% for entity_name,entity in entities | items | selectattr("1.attributes")-%}
+pub mod {{ rust_types.identifier(entity_name) }};
+{% endfor -%}
+
+mod health;
+{% if authentication == 'jwt' -%}
+pub mod auth;
+{% endif %}
+
+use axum::Router;
+{% if database != 'none' -%}
+use crate::app_state::AppState;
+{% endif %}
+
+/// Returns a Router with all entity controllers and health endpoint merged.
+pub fn routes() -> Router{% if database != 'none' %}<AppState>{% endif %} {
+    Router::new()
+        .route("/api/health", axum::routing::get(health::health))
+        {% if authentication == 'jwt' -%}
+        .merge(auth::routes())
+        {% endif -%}
+        {% for entity_name,entity in entities | items | selectattr("1.attributes")-%}
+        .merge({{rust_types.identifier(entity_name)}}::routes())
+        {% endfor %}
+}

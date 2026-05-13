@@ -1,0 +1,5 @@
+{% if backend == 'spring-rs' -%}
+{% include "rust/springrs/health.jinja" %}
+{%- elif backend == 'axum' -%}
+{% include "rust/axum/health.jinja" %}
+{%- endif %}

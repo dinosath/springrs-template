@@ -54,6 +54,11 @@
                     "description": "Priority for ordering collections."
                 },
 
+                "rls": {
+                    "type": "boolean",
+                    "description": "Override the global row_level_security setting for this entity. When true, a tenant_id column and RLS policy are created."
+                },
+
                 "attributes": {
                     "type": "object",
                     "description": "Attribute map keyed by attribute name.",

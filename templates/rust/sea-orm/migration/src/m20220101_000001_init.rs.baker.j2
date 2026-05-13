@@ -40,6 +40,16 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        {% if macros.any_entity_has_rls(entities, row_level_security)|trim == 'true' -%}
+        // Register the custom GUC used by RLS policies to identify the current tenant.
+        // set_config with is_local=false creates the setting for the session so that
+        // subsequent SET LOCAL calls in transactions work without "unrecognized" errors.
+        manager
+            .get_connection()
+            .execute_unprepared("SELECT set_config('app.current_tenant', '', false)")
+            .await?;
+        {% endif -%}
+
         {% for entity_name, entity in entities | items | sort(attribute="1.priority") -%}
         {% if entity.enum -%}
         // Create enum type for {{ entity_name }}
@@ -94,6 +104,9 @@ impl MigrationTrait for Migration {
                     {% endif -%}
                     .col(timestamp({{ entity_name | pascal_case }}::CreatedAt).default(Expr::current_timestamp()))
                     .col(timestamp({{ entity_name | pascal_case }}::LastUpdated).default(Expr::current_timestamp()))
+                    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+                    .col(string({{ entity_name | pascal_case }}::TenantId).not_null())
+                    {% endif -%}
                     {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
                     {% for name, property in attributes -%}
                     {% set is_required = name in entity.required or property.required -%}
@@ -155,6 +168,47 @@ impl MigrationTrait for Migration {
                 table = "{{ table_name }}",
             ))
             .await?;
+
+        {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+        // Enable Row-Level Security for {{ table_name }}
+        manager
+            .get_connection()
+            .execute_unprepared(&format!(
+                r#"
+                ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE {schema}.{table} FORCE ROW LEVEL SECURITY;
+                "#,
+                schema = "{{ schema_name }}",
+                table = "{{ table_name }}",
+            ))
+            .await?;
+
+        // Create tenant isolation policy for {{ table_name }}
+        manager
+            .get_connection()
+            .execute_unprepared(&format!(
+                r#"
+                CREATE POLICY tenant_isolation ON {schema}.{table}
+                    USING (tenant_id = current_setting('app.current_tenant'))
+                    WITH CHECK (tenant_id = current_setting('app.current_tenant'));
+                "#,
+                schema = "{{ schema_name }}",
+                table = "{{ table_name }}",
+            ))
+            .await?;
+
+        // Create index on tenant_id for {{ table_name }}
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_{{ table_name }}_tenant_id")
+                    .table({{ entity_name | pascal_case }}::Table)
+                    .col({{ entity_name | pascal_case }}::TenantId)
+                    .to_owned(),
+            )
+            .await?;
+        {% endif -%}
 
         {% endif -%}
         {% endfor -%}
@@ -285,6 +339,18 @@ impl MigrationTrait for Migration {
         // Drop entity tables in reverse order
         {% for entity_name, entity in entities | items | sort(attribute="1.priority") | reverse -%}
         {% if entity.attributes -%}
+        {% set table_name = entity_name | table_case -%}
+        {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+        // Drop RLS policy for {{ table_name }}
+        manager
+            .get_connection()
+            .execute_unprepared(&format!(
+                "DROP POLICY IF EXISTS tenant_isolation ON {schema}.{table}",
+                schema = "{{ schema_name }}",
+                table = "{{ table_name }}",
+            ))
+            .await?;
+        {% endif -%}
         manager
             .drop_table(Table::drop().table({{ entity_name | pascal_case }}::Table).to_owned())
             .await?;
@@ -309,6 +375,10 @@ enum {{ entity_name | pascal_case }} {
     CreatedAt,
     #[sea_orm(iden = "last_updated")]
     LastUpdated,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    #[sea_orm(iden = "tenant_id")]
+    TenantId,
+    {% endif -%}
     {% set attributes = entity.attributes | items | rejectattr('1.relation','equalto','manyToMany') | rejectattr('1.relation','equalto','oneToMany') -%}
     {% for name, property in attributes -%}
     {%- if macros.is_relation(property)=='true' and (macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true') -%}

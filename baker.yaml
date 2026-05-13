@@ -32,10 +32,26 @@ questions:
     help: Please enter the edition of the project
     default: "2021"
 
+  backend:
+    type: str
+    help: What backend framework do you want to use?
+    default: axum
+    choices:
+      - axum
+      - spring-rs
+
+  orm:
+    type: str
+    help: What ORM do you want to use?
+    default: diesel
+    choices:
+      - diesel
+      - seaorm
+
   authentication:
     type: str
     help: What authentication method do you want to use?
-    default: none
+    default: jwt
     choices:
       - jwt
       - oidc
@@ -52,13 +68,27 @@ questions:
     type: bool
     help: Do you want to use SeaORM migrations?
     default: true
-    ask_if: database == 'postgres'
+    ask_if: database == 'postgres' and orm == 'seaorm'
 
   db_schema:
     type: str
     help: What PostgreSQL schema should tables be created in?
     default: public
     ask_if: database == 'postgres'
+
+  row_level_security:
+    type: bool
+    help: Enable PostgreSQL Row-Level Security (RLS) for multi-tenant data isolation?
+    default: false
+    ask_if: database == 'postgres'
+
+  security_level:
+    type: str
+    help: "Security hardening level: standard (headers only) or hardened (adds CORS, rate limiting, request size limits)"
+    default: standard
+    choices:
+      - standard
+      - hardened
 
   id_type:
     type: str

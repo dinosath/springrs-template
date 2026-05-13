@@ -12,6 +12,10 @@ run = "baker . ./generated/$ANSWER --answers-file samples/answers-$ANSWER.json -
 description = "Run e2e tests"
 run = "(cd generated/$ANSWER && mise run build-and-test)"
 
+[tasks.test]
+description = "Run tests"
+run = "(cd generated/$ANSWER && mise run test)"
+
 [tasks.rest]
 description = "Generate and build rest sample"
 env.ANSWER = "rest"
@@ -38,6 +42,42 @@ description = "Generate and build grpc sample"
 env.ANSWER = "grpc"
 run = [{ task = "generate"},{ task = "e2e" }]
 
+[tasks.rest-rls]
+description = "Generate and build rest sample with Row-Level Security"
+env.ANSWER = "rest-rls"
+run = [{ task = "generate"},{ task = "test" }]
+
+[tasks.axum-diesel]
+description = "Generate and build axum+diesel+jwt+shadcn sample"
+env.ANSWER = "axum-diesel"
+run = [{ task = "generate"},{ task = "e2e" }]
+
 [tasks.all]
 description = "Generate and build all samples"
-depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc"]
+depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc", "rest-rls"]
+
+[tasks.clippy]
+description = "Run clippy on a generated variant"
+run = "(cd generated/$ANSWER && cargo clippy --all-targets -- -D warnings)"
+
+[tasks.fmt-check]
+description = "Check formatting on a generated variant"
+run = "(cd generated/$ANSWER && cargo fmt -- --check)"
+
+[tasks.audit]
+description = "Run cargo-audit on a generated variant"
+run = "(cd generated/$ANSWER && cargo audit)"
+
+[tasks.clippy-all]
+description = "Run clippy on all generated variants"
+run = """
+for variant in rest rest-jwt rest-rls; do
+  echo "=== clippy: $variant ==="
+  ANSWER=$variant mise run clippy || exit 1
+done
+"""
+
+[tasks.security-test]
+description = "Generate rest-rls and run security/RLS tests"
+env.ANSWER = "rest-rls"
+run = [{ task = "generate" }, { task = "test" }]

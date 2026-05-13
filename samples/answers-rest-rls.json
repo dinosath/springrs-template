@@ -1,17 +1,16 @@
 {
-    "project_name": "sample_grpc_app",
+    "project_name": "sample_rls_app",
     "backend": "spring-rs",
     "orm": "seaorm",
-    "authentication": "none",
+    "authentication": "jwt",
     "database": "postgres",
-    "row_level_security": false,
+    "row_level_security": true,
     "security_level": "standard",
-    "use_sqlx_migrations": false,
-    "db_schema": "public",
-    "id_type": "integer",
+    "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm"],
-    "protocols": ["grpc"],
+    "protocols": ["rest"],
     "static_includes": [],
+    "include_in_dockerfile": "config",
     "entities": {
         "Profile": {
             "kind": "collectionType",
@@ -91,11 +90,12 @@
             "kind": "collectionType",
             "collectionName": "categories",
             "priority": 1,
+            "rls": false,
             "info": {
                 "displayName": "Category",
                 "singularName": "category",
                 "pluralName": "categories",
-                "description": "Categories for organizing articles"
+                "description": "Categories for organizing articles – shared across tenants"
             },
             "attributes": {
                 "name": {
@@ -132,11 +132,12 @@
             "kind": "collectionType",
             "collectionName": "tags",
             "priority": 1,
+            "rls": false,
             "info": {
                 "displayName": "Tag",
                 "singularName": "tag",
                 "pluralName": "tags",
-                "description": "Tags for labeling articles"
+                "description": "Tags for labeling articles – shared across tenants"
             },
             "attributes": {
                 "name": {
@@ -167,7 +168,7 @@
                 "displayName": "Article",
                 "singularName": "article",
                 "pluralName": "articles",
-                "description": "Blog articles"
+                "description": "Blog articles – tenant-scoped"
             },
             "attributes": {
                 "title": {
@@ -242,7 +243,7 @@
                 "displayName": "Comment",
                 "singularName": "comment",
                 "pluralName": "comments",
-                "description": "Article comments"
+                "description": "Article comments – tenant-scoped"
             },
             "attributes": {
                 "content": {

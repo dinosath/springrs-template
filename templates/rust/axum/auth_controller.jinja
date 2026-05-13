@@ -1,0 +1,158 @@
+{%- import "macros.jinja" as macros -%}
+//! Authentication endpoints.
+//!
+//! | Method | Path | Auth required | Description |
+//! |---|---|---|
+//! | `POST` | `/api/auth/register` | No | Create a new account; returns a bearer token |
+//! | `POST` | `/api/auth/login` | No | Verify credentials; returns a bearer token |
+//! | `GET` | `/api/auth/me` | Yes | Return the authenticated user's profile |
+//! | `POST` | `/api/auth/logout` | No | Stateless no-op for bearer tokens |
+
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use axum::{
+    extract::Json,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Router,
+};
+use webgates::{
+    authn::login::{LoginResult, LoginService},
+    codecs::jwt::RegisteredClaims,
+    credentials::Credentials,
+    groups::Group,
+    roles::Role,
+};
+use webgates_repositories::services::account_insert::AccountInsertService;
+
+use crate::services::auth_plugin::{AuthUser, AUTH_STATE};
+{% if database != 'none' -%}
+use crate::app_state::AppState;
+{% endif %}
+
+// ─── Shared constants ─────────────────────────────────────────────────────────
+
+const ISSUER: &str = "{{ project_name }}";
+const TOKEN_TTL_SECS: u64 = 3_600;
+
+// ─── Request / response DTOs ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AuthRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// Successful authentication response.
+#[derive(Debug, Serialize)]
+pub struct TokenResponse {
+    /// Bearer token to include in `Authorization: Bearer <token>` headers.
+    pub token: String,
+}
+
+/// Current user profile returned by `/api/auth/me`.
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    pub user_id: String,
+    pub roles: Vec<String>,
+}
+
+// ─── Internal helper ──────────────────────────────────────────────────────────
+
+/// Verify `credentials` against the repositories and, on success, return a signed JWT string.
+async fn verify_and_issue_token(
+    credentials: Credentials<String>,
+) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    let auth = AUTH_STATE
+        .get()
+        .expect("Auth must be initialised before receiving requests");
+
+    let registered_claims = RegisteredClaims::new(
+        ISSUER,
+        (chrono::Utc::now().timestamp() as u64).saturating_add(TOKEN_TTL_SECS),
+    );
+
+    let login_service = LoginService::<Role, Group>::new();
+    let result = login_service
+        .authenticate(
+            credentials,
+            registered_claims,
+            Arc::clone(&auth.secret_repo),
+            Arc::clone(&auth.account_repo),
+            Arc::clone(&auth.jwt_codec),
+        )
+        .await;
+
+    match result {
+        LoginResult::Success(jwt_string) => Ok(jwt_string),
+        LoginResult::InvalidCredentials { .. } => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "invalid credentials"})),
+        )),
+        LoginResult::InternalError { technical_message, .. } => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": technical_message})),
+        )),
+    }
+}
+
+// ─── Route handlers ───────────────────────────────────────────────────────────
+
+/// Register a new user account and return a bearer token.
+pub async fn register(
+    Json(req): Json<AuthRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let auth = AUTH_STATE
+        .get()
+        .expect("Auth must be initialised before receiving requests");
+
+    AccountInsertService::<Role, Group>::insert(&req.username, &req.password)
+        .into_repositories(
+            Arc::clone(&auth.account_repo),
+            Arc::clone(&auth.secret_repo),
+        )
+        .await
+        .map_err(|e: webgates_repositories::errors::Error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+        })?;
+
+    let token =
+        verify_and_issue_token(Credentials::new(&req.username, &req.password)).await?;
+    Ok((StatusCode::CREATED, Json(TokenResponse { token })))
+}
+
+/// Verify credentials and return a bearer token.
+pub async fn login(
+    Json(req): Json<AuthRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let token =
+        verify_and_issue_token(Credentials::new(&req.username, &req.password)).await?;
+    Ok(Json(TokenResponse { token }))
+}
+
+/// Return the profile of the currently authenticated user.
+pub async fn me(AuthUser(user): AuthUser) -> impl IntoResponse {
+    Json(MeResponse {
+        user_id: user.user_id.clone(),
+        roles: user.roles.iter().map(|r| format!("{r:?}")).collect(),
+    })
+}
+
+/// Stateless logout endpoint.
+pub async fn logout() -> impl IntoResponse {
+    StatusCode::NO_CONTENT
+}
+
+/// Auth routes for axum.
+pub fn routes() -> Router{% if database != 'none' %}<AppState>{% endif %} {
+    Router::new()
+        .route("/api/auth/register", post(register))
+        .route("/api/auth/login", post(login))
+        .route("/api/auth/me", get(me))
+        .route("/api/auth/logout", post(logout))
+}

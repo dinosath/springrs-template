@@ -34,6 +34,21 @@ async fn api_post(client: &reqwest::Client, url: &str, body: &Value) -> Value {
     resp.json::<Value>().await.unwrap_or_else(|e| panic!("parse POST {} body: {}", url, e))
 }
 
+{% if row_level_security and authentication != 'jwt' -%}
+/// Like `api_post`, but injects the given tenant via `X-Tenant-Id` header.
+async fn api_post_tenant(client: &reqwest::Client, url: &str, body: &Value, tenant: &str) -> Value {
+    let resp = client.post(url).json(body).header("X-Tenant-Id", tenant).send().await
+        .unwrap_or_else(|e| panic!("POST {} failed: {}", url, e));
+    assert!(
+        resp.status().is_success(),
+        "POST {} returned {}: {:?}", url, resp.status(), resp.text().await.unwrap_or_default()
+    );
+    resp.json::<Value>().await.unwrap_or_else(|e| panic!("parse POST {} body: {}", url, e))
+}
+
+const DEFAULT_E2E_TENANT: &str = "e2e-test-tenant";
+{% endif -%}
+
 {% if authentication == 'jwt' %}
 // ============================================================================
 // Authentication tests
@@ -174,6 +189,7 @@ mod auth {
 {% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
 {% set entity_snake = entity_name | snake_case -%}
 {% set entity_plural = entity.info.pluralName | kebab_case -%}
+{% set entity_rls = macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
 async fn setup_{{ entity_snake }}(base_url: &str, client: &reqwest::Client) -> Value {
     {% for attr_name, attr_prop in entity.attributes | items -%}
     {% if macros.relation_is_many_to_one(attr_prop) == 'true' or (macros.relation_is_one_to_one(attr_prop) == 'true' and not attr_prop.mappedBy) -%}
@@ -215,7 +231,11 @@ async fn setup_{{ entity_snake }}(base_url: &str, client: &reqwest::Client) -> V
         {% endif -%}
         {% endfor -%}
     });
+{% if entity_rls and authentication != 'jwt' -%}
+    api_post_tenant(client, &format!("{}/api/{{ entity_plural }}", base_url), &body, DEFAULT_E2E_TENANT).await
+{% else -%}
     api_post(client, &format!("{}/api/{{ entity_plural }}", base_url), &body).await
+{% endif -%}
 }
 
 {% endfor -%}
@@ -246,6 +266,7 @@ async fn test_api_health(
 {% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
 {% set entity_snake = entity_name | snake_case -%}
 {% set entity_plural = entity.info.pluralName | kebab_case -%}
+{% set entity_rls = macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
 mod {{ entity_snake }}_crud {
     use super::*;
     use e2e::{base_url{% if authentication == 'jwt' %}, authed_http_client{% else %}, http_client{% endif %}};
@@ -259,6 +280,12 @@ mod {{ entity_snake }}_crud {
         let resp = setup_{{ entity_snake }}(&base_url, &http_client).await;
         assert!(resp["id"].as_i64().is_some() || resp["id"].as_str().is_some(),
             "Expected id in create response: {:?}", resp);
+{% if entity_rls and authentication != 'jwt' -%}
+        assert_eq!(
+            resp["tenant_id"].as_str().unwrap_or_default(), DEFAULT_E2E_TENANT,
+            "Expected tenant_id in create response for RLS entity"
+        );
+{% endif -%}
     }
 
     #[rstest]
@@ -269,9 +296,12 @@ mod {{ entity_snake }}_crud {
         // Ensure at least one item exists
         let _ = setup_{{ entity_snake }}(&base_url, &http_client).await;
 
-        let resp = http_client
-            .get(format!("{}/api/{{ entity_plural }}", base_url))
-            .send().await.expect("GET {{ entity_plural }} failed");
+        let mut req = http_client
+            .get(format!("{}/api/{{ entity_plural }}", base_url));
+{% if entity_rls and authentication != 'jwt' -%}
+        req = req.header("X-Tenant-Id", DEFAULT_E2E_TENANT);
+{% endif -%}
+        let resp = req.send().await.expect("GET {{ entity_plural }} failed");
         assert!(resp.status().is_success(), "List {{ entity_plural }} failed: {}", resp.status());
         let body: Value = resp.json().await.expect("parse list body");
         assert!(body.is_array(), "Expected array response for {{ entity_plural }}");
@@ -286,9 +316,12 @@ mod {{ entity_snake }}_crud {
         let created = setup_{{ entity_snake }}(&base_url, &http_client).await;
         let id = extract_id(&created);
 
-        let resp = http_client
-            .get(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
-            .send().await.expect("GET {{ entity_plural }}/{id} failed");
+        let mut req = http_client
+            .get(format!("{}/api/{{ entity_plural }}/{}", base_url, id));
+{% if entity_rls and authentication != 'jwt' -%}
+        req = req.header("X-Tenant-Id", DEFAULT_E2E_TENANT);
+{% endif -%}
+        let resp = req.send().await.expect("GET {{ entity_plural }}/{id} failed");
         assert!(resp.status().is_success(), "read_one {{ entity_snake }} failed: {}", resp.status());
         let body: Value = resp.json().await.expect("parse read_one body");
         assert_eq!(body["id"].as_i64().unwrap_or(0), id, "returned id mismatch");
@@ -335,10 +368,13 @@ mod {{ entity_snake }}_crud {
             {% endfor -%}
         });
 
-        let resp = http_client
+        let mut req = http_client
             .put(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
-            .json(&update_body)
-            .send().await.expect("PUT {{ entity_plural }}/{id} failed");
+            .json(&update_body);
+{% if entity_rls and authentication != 'jwt' -%}
+        req = req.header("X-Tenant-Id", DEFAULT_E2E_TENANT);
+{% endif -%}
+        let resp = req.send().await.expect("PUT {{ entity_plural }}/{id} failed");
         assert!(resp.status().is_success(), "update {{ entity_snake }} failed: {}", resp.status());
         let body: Value = resp.json().await.expect("parse update body");
         assert_eq!(body["id"].as_i64().unwrap_or(0), id, "updated id mismatch");
@@ -352,20 +388,380 @@ mod {{ entity_snake }}_crud {
         let created = setup_{{ entity_snake }}(&base_url, &http_client).await;
         let id = extract_id(&created);
 
-        let resp = http_client
-            .delete(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
-            .send().await.expect("DELETE {{ entity_plural }}/{id} failed");
+        let mut req = http_client
+            .delete(format!("{}/api/{{ entity_plural }}/{}", base_url, id));
+{% if entity_rls and authentication != 'jwt' -%}
+        req = req.header("X-Tenant-Id", DEFAULT_E2E_TENANT);
+{% endif -%}
+        let resp = req.send().await.expect("DELETE {{ entity_plural }}/{id} failed");
         assert!(resp.status().is_success(), "delete {{ entity_snake }} failed: {}", resp.status());
 
         // Confirm 404 after deletion
-        let get_resp = http_client
-            .get(format!("{}/api/{{ entity_plural }}/{}", base_url, id))
-            .send().await.expect("GET after delete failed");
+        let mut get_req = http_client
+            .get(format!("{}/api/{{ entity_plural }}/{}", base_url, id));
+{% if entity_rls and authentication != 'jwt' -%}
+        get_req = get_req.header("X-Tenant-Id", DEFAULT_E2E_TENANT);
+{% endif -%}
+        let get_resp = get_req.send().await.expect("GET after delete failed");
         assert_eq!(get_resp.status().as_u16(), 404, "Expected 404 after delete");
     }
 }
 
 {% endfor %}
+
+{% if row_level_security and authentication != 'jwt' -%}
+{% set ns = namespace(rls_entity=none, rls_entity_name=none, non_rls_entity=none, non_rls_entity_name=none) -%}
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' and not ns.rls_entity -%}
+{% set ns.rls_entity = entity -%}
+{% set ns.rls_entity_name = entity_name -%}
+{% endif -%}
+{% if macros.entity_has_rls(entity, row_level_security)|trim != 'true' and not ns.non_rls_entity -%}
+{% set ns.non_rls_entity = entity -%}
+{% set ns.non_rls_entity_name = entity_name -%}
+{% endif -%}
+{% endfor -%}
+
+{% if ns.rls_entity -%}
+{% set rls_snake = ns.rls_entity_name | snake_case -%}
+{% set rls_plural = ns.rls_entity.info.pluralName | kebab_case -%}
+// ============================================================================
+// RLS tenant isolation tests
+// ============================================================================
+
+mod rls_isolation {
+    use super::*;
+    use e2e::{base_url{% if authentication == 'jwt' %}, authed_http_client{% else %}, http_client{% endif %}};
+    use rstest::rstest;
+
+    /// Helper: create a {{ ns.rls_entity_name }} under a specific tenant.
+    async fn create_as_tenant(client: &reqwest::Client, base_url: &str, tenant: &str, suffix: &str) -> Value {
+        let body = json!({
+{% for attr_name, attr_prop in ns.rls_entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": format!("rls_{}@example.com", suffix),
+{% else -%}
+            "{{ attr_name | snake_case }}": format!("rls_test_{}_{}", "{{ attr_name | snake_case }}", suffix),
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": format!("rls test {} content", suffix),
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+        api_post_tenant(client, &format!("{}/api/{{ rls_plural }}", base_url), &body, tenant).await
+    }
+
+    /// Helper: list all {{ ns.rls_entity_name }} visible to a specific tenant.
+    async fn list_as_tenant(client: &reqwest::Client, base_url: &str, tenant: &str) -> Vec<Value> {
+        let resp = client
+            .get(format!("{}/api/{{ rls_plural }}", base_url))
+            .header("X-Tenant-Id", tenant)
+            .send().await
+            .expect("GET {{ rls_plural }} failed");
+        assert!(resp.status().is_success(), "list as {} failed: {}", tenant, resp.status());
+        let body: Value = resp.json().await.expect("parse list body");
+        if let Some(arr) = body.as_array() { arr.clone() }
+        else if let Some(arr) = body["data"].as_array() { arr.clone() }
+        else { panic!("unexpected list shape: {:?}", body) }
+    }
+
+    /// Tenant A's data must be invisible to Tenant B.
+    #[rstest]
+    #[tokio::test]
+    async fn tenant_isolation_list(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        create_as_tenant(&http_client, &base_url, "tenant-a", "iso_a").await;
+
+        let list_b = list_as_tenant(&http_client, &base_url, "tenant-b").await;
+        for item in &list_b {
+            assert_ne!(
+                item["tenant_id"].as_str().unwrap_or_default(), "tenant-a",
+                "Tenant B can see tenant A's data – RLS isolation broken"
+            );
+        }
+
+        let list_a = list_as_tenant(&http_client, &base_url, "tenant-a").await;
+        assert!(
+            list_a.iter().any(|i| i["tenant_id"].as_str() == Some("tenant-a")),
+            "Tenant A cannot see its own data"
+        );
+    }
+
+    /// Tenant A creates an entity – Tenant B cannot GET it by id.
+    #[rstest]
+    #[tokio::test]
+    async fn tenant_isolation_get_by_id(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let created = create_as_tenant(&http_client, &base_url, "tenant-a", "get_iso").await;
+        let id = extract_id(&created);
+
+        let resp = http_client
+            .get(format!("{}/api/{{ rls_plural }}/{}", base_url, id))
+            .header("X-Tenant-Id", "tenant-b")
+            .send().await.expect("GET failed");
+        assert!(
+            resp.status().as_u16() == 404 || resp.status().as_u16() == 403,
+            "Tenant B could GET tenant A's entity {} – expected 404/403, got {}",
+            id, resp.status()
+        );
+    }
+
+    /// Tenant A creates an entity – Tenant B cannot UPDATE it.
+    #[rstest]
+    #[tokio::test]
+    async fn tenant_isolation_update(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let created = create_as_tenant(&http_client, &base_url, "tenant-a", "upd_iso").await;
+        let id = extract_id(&created);
+
+        let resp = http_client
+            .put(format!("{}/api/{{ rls_plural }}/{}", base_url, id))
+            .header("X-Tenant-Id", "tenant-b")
+            .json(&json!({}))
+            .send().await.expect("PUT failed");
+        assert!(
+            resp.status().as_u16() == 404 || resp.status().as_u16() == 403,
+            "Tenant B could UPDATE tenant A's entity {} – expected 404/403, got {}",
+            id, resp.status()
+        );
+    }
+
+    /// Tenant A creates an entity – Tenant B cannot DELETE it.
+    #[rstest]
+    #[tokio::test]
+    async fn tenant_isolation_delete(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let created = create_as_tenant(&http_client, &base_url, "tenant-a", "del_iso").await;
+        let id = extract_id(&created);
+
+        let resp = http_client
+            .delete(format!("{}/api/{{ rls_plural }}/{}", base_url, id))
+            .header("X-Tenant-Id", "tenant-b")
+            .send().await.expect("DELETE failed");
+        assert!(
+            resp.status().as_u16() == 404 || resp.status().as_u16() == 403,
+            "Tenant B could DELETE tenant A's entity {} – expected 404/403, got {}",
+            id, resp.status()
+        );
+
+        // Verify original still intact for tenant A
+        let verify = http_client
+            .get(format!("{}/api/{{ rls_plural }}/{}", base_url, id))
+            .header("X-Tenant-Id", "tenant-a")
+            .send().await.expect("verify GET failed");
+        assert!(
+            verify.status().is_success(),
+            "Tenant A's entity was deleted by tenant B – status {}",
+            verify.status()
+        );
+    }
+
+    /// POST to RLS entity without X-Tenant-Id should fail.
+    #[rstest]
+    #[tokio::test]
+    async fn missing_tenant_header_rejected(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let body = json!({
+{% for attr_name, attr_prop in ns.rls_entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "no_tenant@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "no_tenant_test",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "no tenant test",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        // POST without X-Tenant-Id
+        let resp = http_client
+            .post(format!("{}/api/{{ rls_plural }}", base_url))
+            .json(&body)
+            .send().await.expect("POST failed");
+        assert!(
+            resp.status().as_u16() == 400 || resp.status().as_u16() == 422,
+            "POST without X-Tenant-Id should fail, got {}",
+            resp.status()
+        );
+
+        // GET list without X-Tenant-Id
+        let resp = http_client
+            .get(format!("{}/api/{{ rls_plural }}", base_url))
+            .send().await.expect("GET failed");
+        assert!(
+            resp.status().as_u16() == 400 || resp.status().as_u16() == 422,
+            "GET list without X-Tenant-Id should fail, got {}",
+            resp.status()
+        );
+    }
+
+    /// Created RLS entity must have tenant_id matching the request tenant.
+    #[rstest]
+    #[tokio::test]
+    async fn created_entity_has_tenant_id(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let created = create_as_tenant(&http_client, &base_url, "my-tenant-42", "tid_check").await;
+        assert_eq!(
+            created["tenant_id"].as_str().unwrap_or_default(), "my-tenant-42",
+            "Expected tenant_id='my-tenant-42', got: {:?}", created["tenant_id"]
+        );
+    }
+
+    /// Count-based tenant isolation: each tenant sees only their own rows.
+    #[rstest]
+    #[tokio::test]
+    async fn tenant_data_count_isolation(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        create_as_tenant(&http_client, &base_url, "count-alpha", "ca1").await;
+        create_as_tenant(&http_client, &base_url, "count-alpha", "ca2").await;
+        create_as_tenant(&http_client, &base_url, "count-beta", "cb1").await;
+
+        let alpha_list = list_as_tenant(&http_client, &base_url, "count-alpha").await;
+        let beta_list = list_as_tenant(&http_client, &base_url, "count-beta").await;
+
+        assert!(alpha_list.len() >= 2, "count-alpha should have >=2, got {}", alpha_list.len());
+        assert!(beta_list.len() >= 1, "count-beta should have >=1, got {}", beta_list.len());
+
+        for beta_item in &beta_list {
+            let beta_id = &beta_item["id"];
+            assert!(
+                !alpha_list.iter().any(|a| &a["id"] == beta_id),
+                "count-beta's item {} leaked into count-alpha's list", beta_id
+            );
+        }
+    }
+
+{% if ns.non_rls_entity -%}
+{% set non_rls_snake = ns.non_rls_entity_name | snake_case -%}
+{% set non_rls_plural = ns.non_rls_entity.info.pluralName | kebab_case -%}
+    /// Non-RLS entity ({{ ns.non_rls_entity_name }}) works without X-Tenant-Id.
+    #[rstest]
+    #[tokio::test]
+    async fn non_rls_entity_works_without_tenant(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let body = json!({
+{% for attr_name, attr_prop in ns.non_rls_entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "non_rls@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "non_rls_test",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "non rls test content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        // POST without X-Tenant-Id – should succeed
+        let resp = http_client
+            .post(format!("{}/api/{{ non_rls_plural }}", base_url))
+            .json(&body)
+            .send().await.expect("POST non-rls failed");
+        assert!(
+            resp.status().is_success(),
+            "Non-RLS entity should not require X-Tenant-Id, got {}",
+            resp.status()
+        );
+
+        // GET list without X-Tenant-Id – should succeed
+        let resp = http_client
+            .get(format!("{}/api/{{ non_rls_plural }}", base_url))
+            .send().await.expect("GET non-rls list failed");
+        assert!(
+            resp.status().is_success(),
+            "Non-RLS list should work without X-Tenant-Id, got {}",
+            resp.status()
+        );
+    }
+
+    /// Non-RLS entity response must NOT contain tenant_id.
+    #[rstest]
+    #[tokio::test]
+    async fn non_rls_entity_has_no_tenant_id(#[future] base_url: String, {% if authentication == 'jwt' %}#[future] authed_http_client: reqwest::Client{% else %}http_client: reqwest::Client{% endif %}) {
+        let base_url = base_url.await;
+        {% if authentication == 'jwt' %}let http_client = authed_http_client.await;{% endif %}
+
+        let body = json!({
+{% for attr_name, attr_prop in ns.non_rls_entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{% if attr_prop.type == 'string' -%}
+{% if attr_prop.format == 'email' -%}
+            "{{ attr_name | snake_case }}": "no_tid@example.com",
+{% else -%}
+            "{{ attr_name | snake_case }}": "no_tid_test",
+{% endif -%}
+{% elif attr_prop.type == 'integer' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default(1) }},
+{% elif attr_prop.type == 'boolean' -%}
+            "{{ attr_name | snake_case }}": {{ attr_prop.default | default('true') | lower }},
+{% elif attr_prop.type == 'text' -%}
+            "{{ attr_name | snake_case }}": "no tid test content",
+{% elif attr_prop.type == 'enumeration' or attr_prop.enum -%}
+            "{{ attr_name | snake_case }}": "{{ attr_prop.enum[0] | default('default') }}",
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+        });
+
+        let resp = http_client
+            .post(format!("{}/api/{{ non_rls_plural }}", base_url))
+            .json(&body)
+            .send().await.expect("POST failed");
+        assert!(resp.status().is_success());
+        let created: Value = resp.json().await.expect("parse body");
+        assert!(
+            created.get("tenant_id").is_none() || created["tenant_id"].is_null(),
+            "Non-RLS entity should not have tenant_id, got: {:?}", created["tenant_id"]
+        );
+    }
+{% endif -%}
+}
+{% endif -%}
+{% endif -%}
 
 {% endif %}{# rest in protocols #}
 
@@ -769,7 +1165,7 @@ async fn test_leptos_{{ entity_name | snake_case }}_list_view(
     }
     assert!(found, "Could not find '{{ entity_display }}' navigation button in sidebar");
 
-    // After click, a '+ New {{ entity_name | pascal_case }}' button should be visible
+    // After click, a '+ New {{ entity_name }}' button should be visible
     wait_for_selector(&page, "button", 5_000).await;
     let create_visible = page
         .query_selector_all("button")

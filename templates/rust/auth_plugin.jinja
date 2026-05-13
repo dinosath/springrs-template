@@ -1,0 +1,159 @@
+{%- import "macros.jinja" as macros -%}
+//! Authentication plugin and shared state.
+//!
+//! [`AuthPlugin`] initialises the webgates JWT codec, in-memory account repository,
+//! and password-hashing secret repository once at startup and stores them in the
+//! module-level [`AUTH_STATE`] singleton.
+//!
+//! Protected route handlers accept [`AuthUser`] as an extractor; it validates the
+//! `Authorization: Bearer <token>` header and returns `401 Unauthorized` when the
+//! token is missing, malformed, or expired.
+//!
+//! ## Environment variable
+//! | Variable | Description | Default |
+//! |---|---|---|
+//! | `JWT_SECRET` | HMAC-SHA256 signing key (≥ 32 bytes) | insecure fallback – **must be overridden in production** |
+
+use std::sync::{Arc, OnceLock};
+
+{% if backend == 'spring-rs' -%}
+use summer::async_trait;
+use summer::tracing;
+use summer::{app::AppBuilder, plugin::Plugin};
+{% elif backend == 'axum' -%}
+use tracing;
+{% endif -%}
+use webgates::codecs::jwt::{JsonWebToken, JsonWebTokenOptions, JwtClaims};
+use webgates::codecs::Codec;
+use webgates::accounts::Account;
+use webgates::groups::Group;
+use webgates::roles::Role;
+use webgates_repositories::memory::account::MemoryAccountRepository;
+use webgates_repositories::memory::secret::MemorySecretRepository;
+
+// ─── Type aliases ─────────────────────────────────────────────────────────────
+
+/// Concrete JWT codec used by the application.
+pub type AppJwtCodec = JsonWebToken<JwtClaims<Account<Role, Group>>>;
+
+// ─── Shared state ─────────────────────────────────────────────────────────────
+
+/// Shared authentication state initialised by [`AuthPlugin`].
+#[derive(Clone)]
+pub struct AuthState {
+    /// In-memory account store (username → hashed credentials, roles, groups).
+    pub account_repo: Arc<MemoryAccountRepository<Role, Group>>,
+    /// In-memory secret store (derives and verifies Argon2 password hashes).
+    pub secret_repo: Arc<MemorySecretRepository>,
+    /// JWT codec used to sign and verify bearer tokens.
+    pub jwt_codec: Arc<AppJwtCodec>,
+}
+
+/// Global singleton – set exactly once by [`AuthPlugin::build`] or [`init_auth`].
+pub static AUTH_STATE: OnceLock<AuthState> = OnceLock::new();
+
+impl std::fmt::Debug for AuthState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthState").finish_non_exhaustive()
+    }
+}
+
+// ─── AuthUser extractor ────────────────────────────────────────────────────────
+
+/// Axum extractor that validates an `Authorization: Bearer <token>` header.
+///
+/// When authentication succeeds the inner `Account<Role, Group>` is available to
+/// the route handler.  When it fails the extractor short-circuits the handler and
+/// returns `401 Unauthorized` with a JSON error body.
+pub struct AuthUser(pub Account<Role, Group>);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AuthUser {
+    type Rejection = (axum::http::StatusCode, axum::Json<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        use axum::http::{header::AUTHORIZATION, StatusCode};
+
+        let reject = |msg: &'static str| {
+            (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"error": msg})),
+            )
+        };
+
+        let header_val = parts
+            .headers
+            .get(AUTHORIZATION)
+            .ok_or_else(|| reject("missing Authorization header"))?;
+
+        let header_str = header_val
+            .to_str()
+            .map_err(|_| reject("invalid Authorization header encoding"))?;
+
+        let token = header_str
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| reject("Authorization header must use the Bearer scheme"))?;
+
+        let auth = AUTH_STATE
+            .get()
+            .expect("AuthPlugin must be added to the App before handling requests");
+
+        let claims = auth
+            .jwt_codec
+            .decode(token.as_bytes())
+            .map_err(|_| reject("invalid or expired token"))?;
+
+        Ok(AuthUser(claims.custom_claims))
+    }
+}
+
+// ─── Initialization ───────────────────────────────────────────────────────────
+
+/// Core auth initialization logic shared by both backends.
+fn init_auth_state() {
+    // jsonwebtoken 10.x requires an explicit CryptoProvider before any encode/decode.
+    let _ = webgates::codecs::jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER
+        .install_default();
+
+    let account_repo = Arc::new(MemoryAccountRepository::<Role, Group>::default());
+    let secret_repo = Arc::new(
+        MemorySecretRepository::new_with_argon2_hasher()
+            .expect("failed to initialise password-hashing repository"),
+    );
+
+    let jwt_options = JsonWebTokenOptions::default();
+
+    let jwt_codec = Arc::new(AppJwtCodec::new_with_options(jwt_options));
+
+    AUTH_STATE
+        .set(AuthState {
+            account_repo,
+            secret_repo,
+            jwt_codec,
+        })
+        .expect("Auth state was initialised more than once");
+}
+
+{% if backend == 'spring-rs' -%}
+// ─── Spring-rs Plugin ─────────────────────────────────────────────────────────
+
+/// Spring-rs plugin that initialises the global authentication state.
+pub struct AuthPlugin;
+
+#[async_trait]
+impl Plugin for AuthPlugin {
+    async fn build(&self, _app: &mut AppBuilder) {
+        init_auth_state();
+    }
+}
+{% elif backend == 'axum' -%}
+// ─── Axum init ────────────────────────────────────────────────────────────────
+
+/// Initialise the global authentication state. Call once at startup before
+/// serving requests.
+pub fn init_auth() {
+    init_auth_state();
+}
+{% endif -%}

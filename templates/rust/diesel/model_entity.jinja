@@ -1,0 +1,119 @@
+{% import "macros.jinja" as macros-%}
+{% import "rust/types.jinja" as rust_types-%}
+use diesel::prelude::*;
+use chrono::NaiveDateTime;
+type DateTime = NaiveDateTime;
+use serde::{Deserialize, Serialize};
+{% if 'rest' in protocols -%}
+use validator::Validate;
+{% endif -%}
+
+{% for name,property in entity.attributes | items | selectattr('1.enum') -%}
+#[derive(PartialEq, Clone, Debug, Default, Eq, Serialize, Deserialize, diesel_derive_enum::DbEnum)]
+#[DbValueStyle = "snake_case"]
+pub enum {{ name | pascal_case }}{
+    {% for enum in property.enum -%}
+    {{ '#[default]' if (property.default and enum == property.default) or (not property.default and loop.first) }}
+    #[serde(rename = "{{ enum }}")]
+    {{ rust_types.rust_var(enum,true) }}{%- if not loop.last -%},{% endif %}
+    {% endfor %}
+}
+{% endfor %}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Queryable, Selectable, Identifiable)]
+#[diesel(table_name = crate::models::schema::{{ entity_name | table_case }})]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct {{ entity_name | pascal_case }} {
+    pub id: i32,
+    pub created_at: NaiveDateTime,
+    pub last_updated: NaiveDateTime,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    pub tenant_id: String,
+    {% endif -%}
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.type == 'relation' -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- endif -%}
+    {%- elif property.type -%}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Insertable{% if 'rest' in protocols %}, Validate{% endif %})]
+#[diesel(table_name = crate::models::schema::{{ entity_name | table_case }})]
+pub struct New{{ entity_name | pascal_case }} {
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    #[serde(skip_deserializing)]
+    pub tenant_id: String,
+    {% endif -%}
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- elif property.type -%}
+    {{ macros.validator_attrs(name, property) }}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+/// Create struct — alias for New{{ entity_name | pascal_case }} used by controllers.
+pub type {{ entity_name | pascal_case }}Create = New{{ entity_name | pascal_case }};
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, AsChangeset{% if 'rest' in protocols %}, Validate{% endif %})]
+#[diesel(table_name = crate::models::schema::{{ entity_name | table_case }})]
+pub struct {{ entity_name | pascal_case }}Update {
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- elif property.type -%}
+    {{ macros.validator_attrs(name, property) }}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+/// Response struct — all readable fields returned to the client.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct {{ entity_name | pascal_case }}Response {
+    pub id: i32,
+    pub created_at: NaiveDateTime,
+    pub last_updated: NaiveDateTime,
+    {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+    pub tenant_id: String,
+    {% endif -%}
+    {% for name, property in entity.attributes | items -%}
+    {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+    {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+    pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
+    {%- elif property.type -%}
+    pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
+    {%- endif -%}
+    {% endfor %}
+}
+
+impl From<{{ entity_name | pascal_case }}> for {{ entity_name | pascal_case }}Response {
+    fn from(model: {{ entity_name | pascal_case }}) -> Self {
+        Self {
+            id: model.id,
+            created_at: model.created_at,
+            last_updated: model.last_updated,
+            {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+            tenant_id: model.tenant_id,
+            {% endif -%}
+            {% for name, property in entity.attributes | items -%}
+            {%- if property.writeOnly -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
+            {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
+            {{ name | snake_case }}_id: model.{{ name | snake_case }}_id,
+            {%- elif property.type -%}
+            {{ rust_types.rust_var(name, false) }}: model.{{ rust_types.rust_var(name, false) }},
+            {%- endif -%}
+            {% endfor %}
+        }
+    }
+}

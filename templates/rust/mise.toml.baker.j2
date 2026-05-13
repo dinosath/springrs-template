@@ -5,6 +5,7 @@ rust = "latest"
 "github:aliev/baker" = "latest"
 "cargo:cargo-chef" = "latest"
 "cargo:cargo-deny" = "latest"
+"cargo:cargo-nextest" = "latest"
 {{'protoc = "latest"' if 'grpc' in protocols }}
 {{'helm = "latest"' if  "helm" in features }}
 {{'node = "22"' if frontend == 'leptos' }}
@@ -74,7 +75,7 @@ run = "cargo build --release"
 
 [tasks.test]
 description = "Run tests"
-run = "cargo test --all --verbose"
+run = "cargo nextest run --all"
 
 [tasks.test-coverage]
 description = "Run tests for coverage report"

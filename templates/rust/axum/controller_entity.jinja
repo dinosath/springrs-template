@@ -1,0 +1,281 @@
+{% import "macros.jinja" as macros -%}
+{% import "rust/types.jinja" as rust_types -%}
+{% set model = entity_name | pascal_case -%}
+{% set entity_rls = macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+{% if orm == 'seaorm' -%}
+use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait, TransactionTrait, ColumnTrait, QueryFilter, PaginatorTrait, QuerySelect};
+{% elif orm == 'diesel' -%}
+use diesel::prelude::*;
+{% endif -%}
+use axum::{
+    extract::{Path, State, Query},
+    http::{HeaderMap, HeaderValue, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use tracing::debug;
+use validator::Validate;
+use crate::app_state::AppState;
+{% if orm == 'seaorm' -%}
+use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create, {{model}}Update, {{model}}Response};
+{% elif orm == 'diesel' -%}
+use crate::models::{{ rust_types.identifier(entity_name) }}::{ {{model}}, {{model}}Create, {{model}}Update, {{model}}Response};
+use crate::models::schema::{{ entity_name | table_case }};
+{% endif -%}
+{% if authentication == 'jwt' -%}
+use crate::services::auth_plugin::AuthUser;
+{% endif -%}
+{% if entity_rls -%}
+use crate::services::tenant_plugin::{TenantId, set_tenant};
+{% endif -%}
+
+/// Maximum number of items per page (hard cap).
+const MAX_PAGE_SIZE: u64 = 100;
+/// Maximum number of items allowed in batch operations.
+const MAX_BATCH_SIZE: usize = 100;
+
+/// Pagination query parameters for list endpoints.
+#[derive(Debug, Deserialize)]
+pub struct ListParams {
+    #[serde(default = "default_page")]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+fn default_page() -> u64 { 1 }
+fn default_page_size() -> u64 { 25 }
+
+{% if orm == 'seaorm' -%}
+async fn load_item<C>(
+    db: &C,
+    item_id: i32,
+) -> Result<Model, (StatusCode, Json<serde_json::Value>)>
+where
+    C: ConnectionTrait,
+{
+    debug!("Loading {{ entity_name | snake_case }} with id: {}", item_id);
+    Entity::find_by_id(item_id)
+        .one(db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not found"}))))
+}
+{% elif orm == 'diesel' -%}
+fn load_item(
+    conn: &mut diesel::PgConnection,
+    item_id: i32,
+) -> Result<{{model}}, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Loading {{ entity_name | snake_case }} with id: {}", item_id);
+    {{ entity_name | table_case }}::table
+        .find(item_id)
+        .first::<{{model}}>(conn)
+        .map_err(|e| match e {
+            diesel::result::Error::NotFound => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not found"}))),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))),
+        })
+}
+{% endif -%}
+
+pub async fn list(State(state): State<AppState>, Query(params): Query<ListParams>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Fetching list of {{ entity.info.pluralName | kebab_case }}");
+    let page_size = params.page_size.min(MAX_PAGE_SIZE);
+    let page = params.page.max(1);
+    let offset = (page.saturating_sub(1)) * page_size;
+
+    {% if orm == 'seaorm' -%}
+    {% if entity_rls -%}
+    let txn = state.db.begin().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let total = Entity::find().count(&txn).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let models = Entity::find()
+        .limit(page_size)
+        .offset(offset)
+        .all(&txn)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    txn.commit().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% else -%}
+    let total = Entity::find().count(&state.db).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let models = Entity::find()
+        .limit(page_size)
+        .offset(offset)
+        .all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+    {% elif orm == 'diesel' -%}
+    let mut conn = state.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let total = {{ entity_name | table_case }}::table
+        .count()
+        .get_result::<i64>(&mut conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))? as u64;
+    let models = {{ entity_name | table_case }}::table
+        .limit(page_size as i64)
+        .offset(offset as i64)
+        .load::<{{model}}>(&mut conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+
+    debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
+    let responses: Vec<{{model}}Response> = models.into_iter().map(Into::into).collect();
+
+    let count = responses.len() as u64;
+    let start: u64 = offset;
+    let end: u64 = if count == 0 { start } else { start + count - 1 };
+    let mut headers = HeaderMap::new();
+    let content_range_value = format!("items {}-{}/{}", start, end, total);
+    if let Ok(val) = HeaderValue::from_str(&content_range_value) {
+        headers.insert("Content-Range", val);
+    }
+    headers.insert("Accept-Ranges", HeaderValue::from_static("items"));
+    Ok((StatusCode::OK, headers, Json(responses)))
+}
+
+pub async fn create(State(state): State<AppState>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(create): Json<{{model}}Create>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    create.validate()
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))))?;
+    debug!("Creating new {{ entity_name | snake_case }} - Request: {:?}", create);
+
+    {% if orm == 'seaorm' -%}
+    {% if entity_rls -%}
+    let mut create = create;
+    create.tenant_id = tenant.as_str().to_owned();
+    let txn = state.db.begin().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let active_model = create.into_active_model();
+    let model = active_model.insert(&txn).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    txn.commit().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% else -%}
+    let active_model = create.into_active_model();
+    let model = active_model.insert(&state.db).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+    {% elif orm == 'diesel' -%}
+    let mut conn = state.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let model = diesel::insert_into({{ entity_name | table_case }}::table)
+        .values(&create)
+        .get_result::<{{model}}>(&mut conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+
+    debug!("Created {{ entity_name | snake_case }} with id: {:?}", model.id);
+    let resp: {{model}}Response = model.into();
+    Ok((StatusCode::CREATED, Json(resp)))
+}
+
+pub async fn update(State(state): State<AppState>, Path(item_id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}, Json(update): Json<{{model}}Update>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    update.validate()
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))))?;
+    debug!("Updating {{ entity_name | snake_case }} with id: {}", item_id);
+
+    {% if orm == 'seaorm' -%}
+    {% if entity_rls -%}
+    let txn = state.db.begin().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let _ = load_item(&txn, item_id).await?;
+    let mut active_model = update.into_active_model();
+    active_model.id = Set(item_id);
+    let model = active_model.update(&txn).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    txn.commit().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% else -%}
+    let _ = load_item(&state.db, item_id).await?;
+    let mut active_model = update.into_active_model();
+    active_model.id = Set(item_id);
+    let model = active_model.update(&state.db).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+    {% elif orm == 'diesel' -%}
+    let mut conn = state.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let _ = load_item(&mut conn, item_id)?;
+    let model = diesel::update({{ entity_name | table_case }}::table.find(item_id))
+        .set(&update)
+        .get_result::<{{model}}>(&mut conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+
+    debug!("Successfully updated {{ entity_name | snake_case }} with id: {}", item_id);
+    let resp: {{model}}Response = model.into();
+    Ok(Json(resp))
+}
+
+pub async fn remove(State(state): State<AppState>, Path(item_id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Deleting {{ entity_name | snake_case }} with id: {}", item_id);
+
+    {% if orm == 'seaorm' -%}
+    {% if entity_rls -%}
+    let txn = state.db.begin().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let model = load_item(&txn, item_id).await?;
+    model.delete(&txn).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    txn.commit().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% else -%}
+    let model = load_item(&state.db, item_id).await?;
+    model.delete(&state.db).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+    {% elif orm == 'diesel' -%}
+    let mut conn = state.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let _ = load_item(&mut conn, item_id)?;
+    diesel::delete({{ entity_name | table_case }}::table.find(item_id))
+        .execute(&mut conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+
+    debug!("Successfully deleted {{ entity_name | snake_case }} with id: {}", item_id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn read_one(State(state): State<AppState>, Path(item_id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}{% if entity_rls %}, tenant: TenantId{% endif %}) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Fetching {{ entity_name | snake_case }} with id: {}", item_id);
+
+    {% if orm == 'seaorm' -%}
+    {% if entity_rls -%}
+    let txn = state.db.begin().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    set_tenant(&txn, &tenant).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let model = load_item(&txn, item_id).await?;
+    txn.commit().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% else -%}
+    let model = load_item(&state.db, item_id).await?;
+    {% endif -%}
+    {% elif orm == 'diesel' -%}
+    let mut conn = state.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let model = load_item(&mut conn, item_id)?;
+    {% endif -%}
+
+    debug!("Successfully fetched {{ entity_name | snake_case }} with id: {}", item_id);
+    let resp: {{model}}Response = model.into();
+    Ok(Json(resp))
+}
+
+pub fn routes() -> axum::Router<AppState> {
+    use axum::routing::{get, post, put, delete};
+    axum::Router::new()
+        .route("/api/{{ entity.info.pluralName | kebab_case }}", get(list).post(create))
+        .route("/api/{{ entity.info.pluralName | kebab_case }}/{id}", get(read_one).put(update).delete(remove))
+}

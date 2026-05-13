@@ -15,6 +15,8 @@ It provides a concise map of the codebase so an agent can orient itself quickly.
 | Author | {{project_author}} |
 | Version | {{project_version}} |
 | Edition | {{project_edition}} |
+| Backend | {{backend}} |
+| ORM | {{orm}} |
 | Database | {{database}} |
 | Authentication | {{authentication}} |
 | Protocols | {{protocols | join(', ')}} |
@@ -23,14 +25,23 @@ It provides a concise map of the codebase so an agent can orient itself quickly.
 | Frontend | {{frontend}} |
 {% endif %}
 
+{% if backend == 'spring-rs' -%}
 The application is built on top of the **summer** framework (a spring-rs fork) and uses:
 
+- [axum](https://github.com/tokio-rs/axum) as the HTTP layer (via summer)
+{% elif backend == 'axum' -%}
+The application uses **axum** as a standalone HTTP framework and includes:
+
 - [axum](https://github.com/tokio-rs/axum) as the HTTP layer
-{% if database == 'postgres' %}
+{% endif -%}
+{% if orm == 'seaorm' and database == 'postgres' %}
 - [SeaORM](https://www.sea-ql.org/SeaORM/) for database access (PostgreSQL)
 {% if use_seaorm_migrations %}
-- SeaORM migrations (`migration/` crate) run automatically at startup via `SeaOrmMigrationPlugin`
+- SeaORM migrations (`migration/` crate) run automatically at startup{% if backend == 'spring-rs' %} via `SeaOrmMigrationPlugin`{% endif %}
+
 {% endif %}
+{% elif orm == 'diesel' and database == 'postgres' %}
+- [Diesel](https://diesel.rs/) for database access (PostgreSQL)
 {% endif %}
 {% if 'grpc' in protocols %}
 - [tonic](https://github.com/hyperium/tonic) for gRPC (`proto/` → `src/controllers/`)

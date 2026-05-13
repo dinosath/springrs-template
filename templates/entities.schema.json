@@ -9,6 +9,10 @@
                 "type": { "type": "string", "const": "object" },
                 "title": { "type": "string" },
                 "description": { "type": "string" },
+                "rls": {
+                    "type": "boolean",
+                    "description": "Override the global row_level_security setting for this entity. When true, a tenant_id column and RLS policy are created."
+                },
                 "attributes": {
                     "type": "object",
                     "patternProperties": {

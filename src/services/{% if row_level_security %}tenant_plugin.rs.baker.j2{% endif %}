@@ -1,0 +1,104 @@
+{% import "macros.jinja" as macros -%}
+//! Multi-tenant Row-Level Security (RLS) plugin.
+//!
+//! Uses the [`tenant-axum`] crate for tenant resolution and injects the
+//! resolved [`TenantId`] into request extensions via [`TenantLayer`].
+//!
+//! Provides:
+//! - [`TenantPlugin`] – registers the `TenantLayer` middleware.
+//! - [`CurrentTenant`] – axum extractor for the resolved tenant.
+//! - [`set_tenant`] – executes `SET LOCAL app.current_tenant` on a DB
+//!   connection/transaction so PostgreSQL RLS policies take effect.
+//!
+//! ## Tenant resolution order
+{% if authentication == 'jwt' -%}
+//! 1. `X-Tenant-Id` HTTP header (explicit tenant context)
+//! 2. JWT `user_id` claim (implicit personal tenant)
+{% else -%}
+//! 1. `X-Tenant-Id` HTTP header
+{% endif -%}
+
+use std::sync::Arc;
+
+use summer::async_trait;
+use summer::{app::AppBuilder, plugin::{Plugin, ComponentRegistry, MutableComponentRegistry}};
+use summer_web::{WebPlugin, RouterLayers};
+use sea_orm::{ConnectionTrait, Statement, DbBackend};
+use tenant_axum::{
+    CompositeTenantResolver, CurrentTenant, HeaderTenantResolver, TenantLayer,
+{% if authentication == 'jwt' -%}
+    JwtTenantResolver,
+{% endif -%}
+};
+
+pub use tenant_axum::CurrentTenant as TenantId;
+
+// ─── set_tenant helper ─────────────────────────────────────────────────────────
+
+/// Executes `SET LOCAL app.current_tenant = '<tenant_id>'` on the given
+/// connection so that PostgreSQL RLS policies filter rows for this tenant.
+///
+/// **Must** be called inside a transaction (`BEGIN … COMMIT`) for `SET LOCAL`
+/// to be scoped correctly.  Outside a transaction the setting persists for the
+/// session — which is usually *not* what you want in a connection-pooled setup.
+pub async fn set_tenant<C: ConnectionTrait>(db: &C, tenant: &CurrentTenant) -> Result<(), sea_orm::DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT set_config('app.current_tenant', $1, true)",
+        [tenant.as_str().into()],
+    );
+    db.execute_raw(stmt).await?;
+    Ok(())
+}
+
+// ─── Plugin ───────────────────────────────────────────────────────────────────
+
+/// Summer plugin that registers the [`TenantLayer`] middleware for tenant
+/// resolution.
+pub struct TenantPlugin;
+
+#[async_trait]
+impl Plugin for TenantPlugin {
+    async fn build(&self, app: &mut AppBuilder) {
+{% if authentication == 'jwt' -%}
+        let resolver = CompositeTenantResolver::new()
+            .add(HeaderTenantResolver::default())
+            .add(JwtTenantResolver::new("user_id"));
+{% else -%}
+        let resolver = CompositeTenantResolver::new()
+            .add(HeaderTenantResolver::default());
+{% endif -%}
+
+        let tenant_layer = TenantLayer::new(resolver)
+            .with_skip_paths(vec!["/api/health", "/api/auth/register", "/api/auth/login", "/api/auth/logout", "/api/auth/me"]);
+
+        let layer_fn: Arc<dyn Fn(summer_web::Router) -> summer_web::Router + Send + Sync> =
+            Arc::new(move |router| {
+                router.layer(tenant_layer.clone())
+            });
+
+        match app.get_component_ref::<RouterLayers>() {
+            Some(layers) => {
+                let mut layers: RouterLayers = (*layers).clone();
+                layers.push(layer_fn);
+                app.add_component(layers);
+            }
+            None => {
+                let mut layers = RouterLayers::default();
+                layers.push(layer_fn);
+                app.add_component(layers);
+            }
+        }
+    }
+
+    fn dependencies(&self) -> Vec<&str> {
+{% if authentication == 'jwt' %}
+        vec![
+            std::any::type_name::<WebPlugin>(),
+            std::any::type_name::<crate::services::auth_plugin::AuthPlugin>(),
+        ]
+{% else %}
+        vec![std::any::type_name::<WebPlugin>()]
+{% endif %}
+    }
+}

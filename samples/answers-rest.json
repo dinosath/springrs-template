@@ -1,7 +1,11 @@
 {
     "project_name": "sample_app",
+    "backend": "spring-rs",
+    "orm": "seaorm",
     "authentication": "none",
     "database": "postgres",
+    "row_level_security": false,
+    "security_level": "standard",
     "use_sqlx_migrations": true,
     "features": ["open-telemetry", "helm","docker_hardened_images"],
     "protocols": ["rest"],
