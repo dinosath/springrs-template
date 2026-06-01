@@ -127,6 +127,15 @@ questions:
       - leptos
       - none
 
+  frontend_protocol:
+    type: str
+    help: What protocol should the frontend use to communicate with the backend?
+    default: rest
+    ask_if: frontend != 'none'
+    choices:
+      - rest
+      - grpc-web
+
   automod:
     type: bool
     help: Do you want to use automod for automatic module generation?

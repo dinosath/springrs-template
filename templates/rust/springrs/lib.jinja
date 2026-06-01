@@ -8,9 +8,11 @@ pub mod models {
     automod::dir!(pub "src/models");
 }
 {% endif -%}
+{% if (authentication == 'jwt' and 'rest' in protocols) or row_level_security or (add_migrations and orm == 'seaorm') -%}
 pub mod services {
     automod::dir!(pub "src/services");
 }
+{%- endif %}
 {% if frontend == 'leptos' -%}
 use static_serve::embed_assets;
 
@@ -55,7 +57,7 @@ pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
     {{ 'use summer_sea_orm::SeaOrmPlugin;' if database != 'none' and orm == 'seaorm' }}
     use summer_web::{AppState, RouterLayers, WebConfigurator, WebPlugin};
     use summer_web::axum::http::HeaderValue;
-    {{ 'use crate::services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if use_seaorm_migrations }}
+    {{ 'use crate::services::seaorm_migration_plugin::SeaOrmMigrationPlugin;' if add_migrations and orm == 'seaorm' }}
     {% if authentication == 'jwt' -%}
     use crate::services::auth_plugin::AuthPlugin;
     {% endif -%}
@@ -68,7 +70,7 @@ pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
         {{ '.add_plugin(SeaOrmPlugin)' if database != 'none' and orm == 'seaorm' }}
         {{ '.add_plugin(AuthPlugin)' if authentication == 'jwt' }}
         {{ '.add_plugin(TenantPlugin)' if row_level_security }}
-        {{ '.add_plugin(SeaOrmMigrationPlugin)' if use_seaorm_migrations }}
+        {{ '.add_plugin(SeaOrmMigrationPlugin)' if add_migrations and orm == 'seaorm' }}
         .add_plugin(WebPlugin)
         .build()
         .await?;
@@ -83,6 +85,15 @@ pub async fn create_app() -> anyhow::Result<summer_web::axum::Router> {
             router = layer_fn(router);
         }
     }
+
+{% if frontend != 'none' -%}
+    // ─── Serve embedded frontend assets ─────────────────────────────────
+    {% if frontend == 'leptos' -%}
+    router = router.merge(leptos_router());
+    {% else -%}
+    router = router.merge(static_router());
+    {% endif -%}
+{% endif -%}
 
     // ─── Security headers (always applied) ──────────────────────────────
     use summer_web::axum::http::header;

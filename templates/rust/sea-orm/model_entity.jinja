@@ -2,9 +2,7 @@
 {% import "rust/types.jinja" as rust_types-%}
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
-{% if 'rest' in protocols -%}
 use validator::Validate;
-{% endif -%}
 
 {% for name,property in entity.attributes | items | selectattr('1.enum') -%}
 #[derive(PartialEq, Clone, Debug, Default, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
@@ -45,7 +43,7 @@ pub struct Model {
 impl ActiveModelBehavior for ActiveModel {}
 
 /// Create struct — fields that the caller supplies; timestamps are auto-set by the server.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel{% if 'rest' in protocols %}, Validate{% endif %})]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel, Validate)]
 #[sea_orm(
     active_model = "ActiveModel",
     set(created_at = "chrono::Utc::now().naive_utc()"),
@@ -68,7 +66,7 @@ pub struct {{ entity_name | pascal_case }}Create {
 }
 
 /// Update struct — same writable fields as Create; `last_updated` is refreshed automatically.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel{% if 'rest' in protocols %}, Validate{% endif %})]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, DeriveIntoActiveModel, Validate)]
 #[sea_orm(
     active_model = "ActiveModel",
     set(last_updated = "chrono::Utc::now().naive_utc()")

@@ -300,6 +300,51 @@ impl MigrationTrait for Migration {
         {% endif -%}
         {% endfor -%}
 
+        {% if row_level_security -%}
+        // Create a dedicated non-superuser role that the application uses when
+        // executing RLS-protected queries.  Superusers bypass all RLS policies
+        // (even with FORCE RLS); by switching to this role inside each
+        // transaction with SET LOCAL ROLE, RLS is enforced correctly.
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"DO $$ BEGIN CREATE ROLE app_rls_user NOLOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE; EXCEPTION WHEN duplicate_object THEN NULL; END $$"#,
+            )
+            .await?;
+
+        // Grant table privileges to app_rls_user on RLS-protected tables
+        {% for entity_name, entity in entities | items -%}
+        {% if macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+        {% set table_name = entity_name | table_case -%}
+        manager
+            .get_connection()
+            .execute_unprepared(&format!(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {schema}.{table} TO app_rls_user",
+                schema = "{{ schema_name }}",
+                table = "{{ table_name }}",
+            ))
+            .await?;
+        {% endif -%}
+        {% endfor -%}
+
+        // Grant sequence usage (needed for INSERT with serial PKs)
+        manager
+            .get_connection()
+            .execute_unprepared(&format!(
+                "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {schema} TO app_rls_user",
+                schema = "{{ schema_name }}",
+            ))
+            .await?;
+
+        // Allow the connection role to switch to app_rls_user via SET ROLE
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"DO $$ BEGIN EXECUTE format('GRANT app_rls_user TO %I', current_user); EXCEPTION WHEN others THEN NULL; END $$"#,
+            )
+            .await?;
+        {% endif -%}
+
         Ok(())
     }
 

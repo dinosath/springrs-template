@@ -1,0 +1,38 @@
+use leptos::prelude::*;
+
+/// Full-page 5XX Server Error page.
+///
+/// Activate by setting the view signal to `View::ServerError(message)`.
+/// The error detail is only rendered in debug builds.
+#[component]
+pub fn ServerError(
+    /// Optional technical error message – shown only in debug builds.
+    #[prop(into, optional)]
+    message: Option<String>,
+) -> impl IntoView {
+    view! {
+        <div class="flex min-h-[70vh] flex-col items-center justify-center gap-4 text-center p-8">
+            <span class="text-9xl font-bold text-gray-200 dark:text-gray-700 select-none">
+                "500"
+            </span>
+            <h1 class="text-2xl font-semibold text-gray-800 dark:text-white">
+                "Server Error"
+            </h1>
+            <p class="max-w-md text-gray-500 dark:text-gray-400">
+                "Something went wrong on our end. Please try again later."
+            </p>
+            {
+                let msg = message.clone();
+                if cfg!(debug_assertions) {
+                    msg.map(|m| view! {
+                        <pre class="max-w-xl rounded bg-gray-100 dark:bg-gray-800 p-4 text-left text-sm whitespace-pre-wrap break-all text-gray-700 dark:text-gray-300">
+                            {m}
+                        </pre>
+                    }).into_any()
+                } else {
+                    ().into_any()
+                }
+            }
+        </div>
+    }
+}

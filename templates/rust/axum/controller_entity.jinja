@@ -2,6 +2,17 @@
 {% import "rust/types.jinja" as rust_types -%}
 {% set model = entity_name | pascal_case -%}
 {% set entity_rls = macros.entity_has_rls(entity, row_level_security)|trim == 'true' -%}
+{%- set ns = namespace(state_field_name=None, state_enum_type=None, state_type_rust=None, search_col=None) -%}
+{%- for _name, _prop in entity.attributes | items -%}
+  {%- if (_name == 'state' or _name == 'status') and _prop.type == 'enumeration' and ns.state_field_name is none -%}
+    {%- set ns.state_field_name = _name | snake_case -%}
+    {%- set ns.state_enum_type = _name | pascal_case -%}
+    {%- set ns.state_type_rust = (entity_name | pascal_case) + (_name | pascal_case) -%}
+  {%- endif -%}
+  {%- if _prop.type in ['string', 'text'] and _name in ['name', 'title', 'label'] and ns.search_col is none -%}
+    {%- set ns.search_col = _name | snake_case -%}
+  {%- endif -%}
+{%- endfor -%}
 {% if orm == 'seaorm' -%}
 use sea_orm::{ActiveModelTrait, ModelTrait, EntityTrait, Set, IntoActiveModel, ConnectionTrait, TransactionTrait, ColumnTrait, QueryFilter, PaginatorTrait, QuerySelect};
 {% elif orm == 'diesel' -%}
@@ -13,14 +24,14 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::debug;
 use validator::Validate;
 use crate::app_state::AppState;
 {% if orm == 'seaorm' -%}
-use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create, {{model}}Update, {{model}}Response};
+use crate::models::{{ rust_types.identifier(entity_name) }}::{Entity, Model, Column, {{model}}Create, {{model}}Update, {{model}}Response{% if ns.state_enum_type %}, {{ ns.state_enum_type }} as {{ ns.state_type_rust }}{% endif %}};
 {% elif orm == 'diesel' -%}
-use crate::models::{{ rust_types.identifier(entity_name) }}::{ {{model}}, {{model}}Create, {{model}}Update, {{model}}Response};
+use crate::models::{{ rust_types.identifier(entity_name) }}::{ {{model}}, {{model}}Create, {{model}}Update, {{model}}Response{% if ns.state_enum_type %}, {{ ns.state_enum_type }} as {{ ns.state_type_rust }}{% endif %}};
 use crate::models::schema::{{ entity_name | table_case }};
 {% endif -%}
 {% if authentication == 'jwt' -%}
@@ -32,16 +43,21 @@ use crate::services::tenant_plugin::{TenantId, set_tenant};
 
 /// Maximum number of items per page (hard cap).
 const MAX_PAGE_SIZE: u64 = 100;
-/// Maximum number of items allowed in batch operations.
-const MAX_BATCH_SIZE: usize = 100;
 
-/// Pagination query parameters for list endpoints.
+/// Pagination and filtering query parameters for list endpoints.
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
     #[serde(default = "default_page_size")]
     pub page_size: u64,
+    /// Case-insensitive substring search on the primary name/title field.
+    {% if not ns.search_col %}#[allow(dead_code)]
+    {% endif %}pub search: Option<String>,
+    /// Sort field: `id`, `created_at` (default), or `last_updated`.
+    pub sort: Option<String>,
+    /// Sort direction: `asc` or `desc` (default).
+    pub order: Option<String>,
 }
 fn default_page() -> u64 { 1 }
 fn default_page_size() -> u64 { 25 }
@@ -100,6 +116,27 @@ pub async fn list(State(state): State<AppState>, Query(params): Query<ListParams
     txn.commit().await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
     {% else -%}
+    {% if ns.search_col %}
+    let total = if let Some(ref s) = params.search {
+        Entity::find()
+            .filter(Column::{{ ns.search_col | pascal_case }}.contains(s.as_str()))
+            .count(&state.db).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+    } else {
+        Entity::find().count(&state.db).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+    };
+    let mut q = Entity::find();
+    if let Some(ref s) = params.search {
+        q = q.filter(Column::{{ ns.search_col | pascal_case }}.contains(s.as_str()));
+    }
+    let models = q
+        .limit(page_size)
+        .offset(offset)
+        .all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% else %}
     let total = Entity::find().count(&state.db).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
     let models = Entity::find()
@@ -108,19 +145,63 @@ pub async fn list(State(state): State<AppState>, Query(params): Query<ListParams
         .all(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif %}
     {% endif -%}
     {% elif orm == 'diesel' -%}
     let mut conn = state.pool.get()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% if ns.search_col %}
+    let total = if let Some(ref s) = params.search {
+        {{ entity_name | table_case }}::table
+            .filter({{ entity_name | table_case }}::{{ ns.search_col }}.ilike(format!("%{}%", s)))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))? as u64
+    } else {
+        {{ entity_name | table_case }}::table
+            .count()
+            .get_result::<i64>(&mut conn)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))? as u64
+    };
+    let models = {
+        let mut q = {{ entity_name | table_case }}::table.into_boxed();
+        if let Some(ref s) = params.search {
+            q = q.filter({{ entity_name | table_case }}::{{ ns.search_col }}.ilike(format!("%{}%", s)));
+        }
+        let q = match (params.sort.as_deref(), params.order.as_deref()) {
+            (Some("last_updated"), Some("asc")) => q.order({{ entity_name | table_case }}::last_updated.asc()),
+            (Some("last_updated"), _) => q.order({{ entity_name | table_case }}::last_updated.desc()),
+            (Some("id"), Some("asc")) => q.order({{ entity_name | table_case }}::id.asc()),
+            (Some("id"), _) => q.order({{ entity_name | table_case }}::id.desc()),
+            (_, Some("asc")) => q.order({{ entity_name | table_case }}::created_at.asc()),
+            _ => q.order({{ entity_name | table_case }}::created_at.desc()),
+        };
+        q.limit(page_size as i64)
+            .offset(offset as i64)
+            .load::<{{model}}>(&mut conn)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+    };
+    {% else %}
     let total = {{ entity_name | table_case }}::table
         .count()
         .get_result::<i64>(&mut conn)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))? as u64;
-    let models = {{ entity_name | table_case }}::table
-        .limit(page_size as i64)
-        .offset(offset as i64)
-        .load::<{{model}}>(&mut conn)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let models = {
+        let q = {{ entity_name | table_case }}::table.into_boxed();
+        let q = match (params.sort.as_deref(), params.order.as_deref()) {
+            (Some("last_updated"), Some("asc")) => q.order({{ entity_name | table_case }}::last_updated.asc()),
+            (Some("last_updated"), _) => q.order({{ entity_name | table_case }}::last_updated.desc()),
+            (Some("id"), Some("asc")) => q.order({{ entity_name | table_case }}::id.asc()),
+            (Some("id"), _) => q.order({{ entity_name | table_case }}::id.desc()),
+            (_, Some("asc")) => q.order({{ entity_name | table_case }}::created_at.asc()),
+            _ => q.order({{ entity_name | table_case }}::created_at.desc()),
+        };
+        q.limit(page_size as i64)
+            .offset(offset as i64)
+            .load::<{{model}}>(&mut conn)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+    };
+    {% endif %}
     {% endif -%}
 
     debug!("Loaded {} {{ entity.info.pluralName | kebab_case }}", models.len());
@@ -273,9 +354,48 @@ pub async fn read_one(State(state): State<AppState>, Path(item_id): Path<i32>{% 
     Ok(Json(resp))
 }
 
+{% if ns.state_field_name %}
+/// Request body for state transition endpoints.
+#[derive(Debug, Deserialize)]
+pub struct StateTransitionRequest {
+    pub {{ ns.state_field_name }}: {{ ns.state_type_rust }},
+}
+
+/// Transition `{{ entity_name | snake_case }}` to a new `{{ ns.state_field_name }}` without touching other fields.
+pub async fn set_state(State(state): State<AppState>, Path(item_id): Path<i32>{% if authentication == 'jwt' %}, _auth: AuthUser{% endif %}, Json(req): Json<StateTransitionRequest>) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    debug!("Transitioning {{ entity_name | snake_case }} {} state to {:?}", item_id, req.{{ ns.state_field_name }});
+
+    {% if orm == 'seaorm' -%}
+    use sea_orm::Set;
+    let model = load_item(&state.db, item_id).await?;
+    let mut active_model = model.into_active_model();
+    active_model.{{ ns.state_field_name }} = Set(req.{{ ns.state_field_name }} as {{ ns.state_enum_type }});
+    let model = active_model.update(&state.db).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% elif orm == 'diesel' -%}
+    let mut conn = state.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let _ = load_item(&mut conn, item_id)?;
+    let model = diesel::update({{ entity_name | table_case }}::table.find(item_id))
+        .set({{ entity_name | table_case }}::{{ ns.state_field_name }}.eq(&req.{{ ns.state_field_name }}))
+        .get_result::<{{model}}>(&mut conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    {% endif -%}
+
+    debug!("Successfully transitioned {{ entity_name | snake_case }} {} to {:?}", item_id, req.{{ ns.state_field_name }});
+    let resp: {{model}}Response = model.into();
+    Ok(Json(resp))
+}
+{% endif %}
+
 pub fn routes() -> axum::Router<AppState> {
-    use axum::routing::{get, post, put, delete};
-    axum::Router::new()
+    use axum::routing::{get{% if ns.state_field_name %}, patch{% endif %}};
+    let router = axum::Router::new()
         .route("/api/{{ entity.info.pluralName | kebab_case }}", get(list).post(create))
-        .route("/api/{{ entity.info.pluralName | kebab_case }}/{id}", get(read_one).put(update).delete(remove))
+        .route("/api/{{ entity.info.pluralName | kebab_case }}/{id}", get(read_one).put(update).delete(remove));
+    {% if ns.state_field_name %}
+    router.route("/api/{{ entity.info.pluralName | kebab_case }}/{id}/state", patch(set_state))
+    {% else %}
+    router
+    {% endif %}
 }

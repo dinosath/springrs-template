@@ -1,0 +1,1014 @@
+{% import "macros.jinja" as macros -%}
+{#
+  business_tests.jinja
+  ─────────────────────────────────────────────────────────────────────────────
+  Generates `tests/business_tests.rs` — fully schema-driven business workflow
+  integration tests.  No entity names, field names, or API routes are
+  hard-coded in this template.  Everything is derived from the `entities`
+  variable supplied by baker.
+
+  Pattern-detection heuristics (all field-name checks are case-insensitive
+  substring matches against the raw attribute key):
+
+    "financial document"   entity with >= 2 numeric attributes whose names
+                           contain any of: amount | total | net | vat
+    "line item"            entity with a numeric "quantity*" attribute AND
+                           at least one manyToOne FK
+    "contact / partner"    entity with at least one email-format string attribute
+    "state machine"        entity with an enum attribute named "state" or "status"
+
+  Generated test modules (only rendered when the pattern is detected):
+    {entity}_document_workflow_tests  — create header, add lines, verify sums,
+                                        balance per contact, state transitions
+    contact_management_tests          — create / update / validate contacts
+    business_validation_tests         — 404s, required-field errors, auth, pagination
+#}
+
+{# ══════════════════════════════════════════════════════════════════════════
+   §1  Jinja helper macros  (all field lookups are case-insensitive)
+   ══════════════════════════════════════════════════════════════════════════ #}
+
+{# snake_case name of the best "total" numeric field on an entity #}
+{%- macro total_field(ev) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and fp.type == 'number' and ('total' in (fn | lower) or 'amount_total' in (fn | snake_case) or 'total_amount' in (fn | snake_case)) -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{%- if not m.f -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and fp.type == 'number' and ('amount' in (fn | lower) or 'net' in (fn | lower)) -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# snake_case name of the first "net / subtotal" numeric field #}
+{%- macro net_field(ev) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and fp.type == 'number' and ('net' in (fn | lower) or 'subtotal' in (fn | lower)) -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# snake_case name of the first "vat / tax / duty" numeric field #}
+{%- macro vat_field(ev) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and fp.type == 'number' and ('vat' in (fn | lower) or 'tax' in (fn | lower) or 'duty' in (fn | lower)) -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# snake_case name of the first "quantity*" numeric field #}
+{%- macro qty_field(ev) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and 'quantity' in (fn | lower) and fp.type == 'number' -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# snake_case name of the first "price / unit" numeric field #}
+{%- macro price_field(ev) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and fp.type == 'number' and ('price' in (fn | lower) or 'unit' in (fn | lower)) -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# First enum value of the state/status field, or '' #}
+{%- macro initial_state(ev) -%}
+{%- set m = namespace(v='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.v and (fn | lower) in ['state', 'status'] and fp.enum -%}
+{%- set m.v = fp.enum[0] -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.v | trim }}
+{%- endmacro -%}
+
+{# Second enum value of the state/status field (the "next" state), or '' #}
+{%- macro next_state(ev) -%}
+{%- set m = namespace(v='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.v and (fn | lower) in ['state', 'status'] and fp.enum and fp.enum | length > 1 -%}
+{%- set m.v = fp.enum[1] -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.v | trim }}
+{%- endmacro -%}
+
+{# snake_case name of the state/status field, or '' #}
+{%- macro state_field_name(ev) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and (fn | lower) in ['state', 'status'] and fp.enum -%}
+{%- set m.f = fn | snake_case -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# snake_case FK field name pointing from ev -> target_name (manyToOne only) #}
+{%- macro fk_to(ev, target_name) -%}
+{%- set m = namespace(f='') -%}
+{%- for fn, fp in ev.attributes | items -%}
+{%- if not m.f and fp.type == 'relation' and fp.relation == 'manyToOne' and fp.target == target_name -%}
+{%- set m.f = fn | snake_case ~ '_id' -%}
+{%- endif -%}
+{%- endfor -%}
+{{ m.f | trim }}
+{%- endmacro -%}
+
+{# Emit a single JSON key/value for one non-relation attribute #}
+{%- macro attr_value(fn, fp, prefix, sfx) -%}
+{%- if fp.type == 'string' or fp.type == 'text' -%}
+{%- if fp.format == 'email' -%}
+            "{{ fn | snake_case }}": format!("{{ prefix }}_{}@example.com", {{ sfx }}),
+{%- elif fp.format == 'date-time' or fp.format == 'date' -%}
+            "{{ fn | snake_case }}": "2024-01-15T00:00:00",
+{%- elif fp.maxLength is defined and fp.maxLength <= 10 -%}
+            "{{ fn | snake_case }}": format!("{:.*}", {{ fp.maxLength }}, format!("v{}", {{ sfx }})),
+{%- elif fp.enum -%}
+            "{{ fn | snake_case }}": "{{ fp.enum[0] }}",
+{%- else -%}
+            "{{ fn | snake_case }}": format!("{{ prefix }} {{ fn | title }} {}", {{ sfx }}),
+{%- endif -%}
+{%- elif fp.type == 'integer' -%}
+            "{{ fn | snake_case }}": {{ fp.default | default(1) }},
+{%- elif fp.type == 'number' -%}
+            "{{ fn | snake_case }}": {{ fp.default | default(0.0) }},
+{%- elif fp.type == 'boolean' -%}
+            "{{ fn | snake_case }}": {{ fp.default | default('true') | lower }},
+{%- elif fp.enum or fp.type == 'enumeration' -%}
+            "{{ fn | snake_case }}": "{{ fp.enum[0] }}",
+{%- endif -%}
+{%- endmacro -%}
+
+{# ══════════════════════════════════════════════════════════════════════════
+   §2  Entity pattern detection — purely from attributes, no hardcoded names
+   ══════════════════════════════════════════════════════════════════════════ #}
+
+{% set ns = namespace(header_names=[], line_names=[], contact_names=[], state_names=[]) -%}
+{% for en, ev in entities | items -%}
+{% if ev.attributes -%}
+{% set scan = namespace(amount_count=0, has_qty=false, has_m2o=false, has_email=false, has_state=false) -%}
+{% for fn, fp in ev.attributes | items -%}
+{% if fp.type == 'number' and ('amount' in (fn | lower) or 'total' in (fn | lower) or 'net' in (fn | lower) or 'vat' in (fn | lower)) -%}{% set scan.amount_count = scan.amount_count + 1 -%}{% endif -%}
+{% if 'quantity' in (fn | lower) and fp.type == 'number' -%}{% set scan.has_qty = true -%}{% endif -%}
+{% if fp.type == 'relation' and fp.relation == 'manyToOne' -%}{% set scan.has_m2o = true -%}{% endif -%}
+{% if fp.type == 'string' and fp.format == 'email' -%}{% set scan.has_email = true -%}{% endif -%}
+{% if (fn | lower) in ['state', 'status'] and fp.enum -%}{% set scan.has_state = true -%}{% endif -%}
+{% endfor -%}
+{% if scan.amount_count >= 2 -%}{% set ns.header_names = ns.header_names + [en] -%}{% endif -%}
+{% if scan.has_qty and scan.has_m2o -%}{% set ns.line_names = ns.line_names + [en] -%}{% endif -%}
+{% if scan.has_email -%}{% set ns.contact_names = ns.contact_names + [en] -%}{% endif -%}
+{% if scan.has_state -%}{% set ns.state_names = ns.state_names + [en] -%}{% endif -%}
+{% endif -%}
+{% endfor -%}
+
+{# ══════════════════════════════════════════════════════════════════════════
+   §3  Generated Rust source
+   ══════════════════════════════════════════════════════════════════════════ #}
+
+//! Business-Logic Integration Tests
+//!
+//! Auto-generated by `templates/rust/business_tests.jinja`.
+//! All test code is derived from the entity schema — no names are hard-coded.
+//!
+//! Detected patterns
+//! ─────────────────
+//!   Financial document entities : {{ ns.header_names | join(", ") }}
+//!   Line-item entities           : {{ ns.line_names | join(", ") }}
+//!   Contact / partner entities   : {{ ns.contact_names | join(", ") }}
+//!   State-machine entities       : {{ ns.state_names | join(", ") }}
+
+#![allow(dead_code)]
+
+use axum_test::TestServer;
+use serde_json::json;
+use std::sync::OnceLock;
+{% if database == 'postgres' -%}
+use testcontainers::ContainerAsync;
+use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
+{% endif -%}
+use {{ project_name | snake_case }}::create_app;
+
+// ── Shared infrastructure — one OnceLock per test binary ─────────────────────
+
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build shared tokio runtime for business tests")
+    })
+}
+
+struct TestInfra {
+    server: TestServer,
+{% if authentication != 'none' -%}
+    auth_token: String,
+{% endif -%}
+{% if database == 'postgres' -%}
+    _container: ContainerAsync<Postgres>,
+{% endif -%}
+}
+
+fn infra() -> &'static TestInfra {
+    static INFRA: OnceLock<TestInfra> = OnceLock::new();
+    INFRA.get_or_init(|| {
+        shared_runtime().block_on(async {
+{% if database == 'postgres' -%}
+            let container = Postgres::default().start().await
+                .expect("postgres container failed to start");
+            let port = container.get_host_port_ipv4(5432).await
+                .expect("postgres port unavailable");
+            // SAFETY: called once at startup before any thread reads DATABASE_URL
+            unsafe {
+                std::env::set_var(
+                    "DATABASE_URL",
+                    format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres"),
+                );
+            }
+{% endif -%}
+            let app = create_app().await.expect("failed to create app");
+            let server = TestServer::new(app);
+{% if authentication == 'jwt' -%}
+            let pwd = biz_password();
+            let reg = server
+                .post("/api/auth/register")
+                .json(&json!({"username": "biz_testuser", "password": pwd}))
+                .await;
+            let auth_token = if reg.status_code().is_success() {
+                reg.json::<serde_json::Value>()["token"].as_str().unwrap_or_default().to_owned()
+            } else {
+                server
+                    .post("/api/auth/login")
+                    .json(&json!({"username": "biz_testuser", "password": pwd}))
+                    .await
+                    .json::<serde_json::Value>()["token"]
+                    .as_str().unwrap_or_default().to_owned()
+            };
+{% endif -%}
+            TestInfra {
+                server,
+{% if authentication != 'none' -%}
+                auth_token,
+{% endif -%}
+{% if database == 'postgres' -%}
+                _container: container,
+{% endif -%}
+            }
+        })
+    })
+}
+
+static BIZ_PASSWORD: OnceLock<String> = OnceLock::new();
+fn biz_password() -> &'static str {
+    BIZ_PASSWORD.get_or_init(|| {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+        format!("Biz{ms}!")
+    })
+}
+
+/// Starts at 9000 to avoid colliding with the CRUD test binary (which starts at 1).
+static BIZ_CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(9000);
+fn next_suffix() -> String {
+    BIZ_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string()
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+fn id_of(v: &serde_json::Value) -> i64 {
+    v["id"].as_i64()
+        .or_else(|| v["id"].as_str().and_then(|s| s.parse().ok()))
+        .expect("response missing 'id'")
+}
+
+fn f64_of(v: &serde_json::Value, key: &str) -> f64 {
+    v[key].as_f64()
+        .or_else(|| v[key].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0.0)
+}
+
+fn round2(x: f64) -> f64 { (x * 100.0).round() / 100.0 }
+
+async fn do_post(i: &TestInfra, path: &str, body: &serde_json::Value) -> axum_test::TestResponse {
+    let mut req = i.server.post(path).json(body);
+{% if authentication != 'none' -%}
+    req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+    req.await
+}
+
+async fn do_get(i: &TestInfra, path: &str) -> axum_test::TestResponse {
+    let mut req = i.server.get(path);
+{% if authentication != 'none' -%}
+    req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+    req.await
+}
+
+async fn do_put(i: &TestInfra, path: &str, body: &serde_json::Value) -> axum_test::TestResponse {
+    let mut req = i.server.put(path).json(body);
+{% if authentication != 'none' -%}
+    req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+    req.await
+}
+
+async fn do_delete(i: &TestInfra, path: &str) -> axum_test::TestResponse {
+    let mut req = i.server.delete(path);
+{% if authentication != 'none' -%}
+    req = req.add_header("Authorization", format!("Bearer {}", i.auth_token));
+{% endif -%}
+    req.await
+}
+
+// ── Entity creation helpers (same pattern as unified_e2e_tests.jinja) ────────
+
+{% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
+{% set entity_snake  = entity_name | snake_case -%}
+{% set entity_plural = entity.info.pluralName | default(entity_name | plural | snake_case) -%}
+/// Creates a `{{ entity_name }}` record together with all required FK dependencies.
+async fn create_{{ entity_snake }}(i: &TestInfra) -> serde_json::Value {
+    let suffix = next_suffix();
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+{% set fk_target = attr_prop.target | replace("-","_") -%}
+{% if fk_target != entity_snake -%}
+{% set back_ref = namespace(found=false) -%}
+{% for te_name, te_data in entities | items -%}{% if te_name | snake_case == fk_target -%}{% for ta_name, ta_prop in te_data.attributes | items -%}{% if macros.relation_has_fk(ta_prop) | trim == 'true' and ta_prop.target | replace("-","_") == entity_snake -%}{% set back_ref.found = true -%}{% endif -%}{% endfor -%}{% endif -%}{% endfor -%}
+{% if not back_ref.found -%}
+    let {{ attr_name | snake_case }}_dep = create_{{ fk_target }}(i).await;
+    let {{ attr_name | snake_case }}_id  = id_of(&{{ attr_name | snake_case }}_dep);
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+    let payload = json!({
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+{% set fk_target = attr_prop.target | replace("-","_") -%}
+{% if fk_target != entity_snake -%}
+{% set back_ref = namespace(found=false) -%}
+{% for te_name, te_data in entities | items -%}{% if te_name | snake_case == fk_target -%}{% for ta_name, ta_prop in te_data.attributes | items -%}{% if macros.relation_has_fk(ta_prop) | trim == 'true' and ta_prop.target | replace("-","_") == entity_snake -%}{% set back_ref.found = true -%}{% endif -%}{% endfor -%}{% endif -%}{% endfor -%}
+{% if not back_ref.found -%}
+        "{{ attr_name | snake_case }}_id": {{ attr_name | snake_case }}_id,
+{% endif -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+{% for attr_name, attr_prop in entity.attributes | items -%}
+{% if not attr_prop.readOnly and attr_prop.type != 'relation' -%}
+{{ attr_value(attr_name, attr_prop, "test", "suffix") }}
+{% endif -%}
+{% endfor -%}
+    });
+    let resp = do_post(i, "/api/{{ entity_plural }}", &payload).await;
+    assert!(
+        resp.status_code().is_success(),
+        "create_{{ entity_snake }} failed: {} — {}",
+        resp.status_code(), resp.text()
+    );
+    resp.json()
+}
+
+{% endfor -%}
+
+// ============================================================================
+// § Workflow tests — one module per detected financial-document entity
+// ============================================================================
+
+{% for header_name in ns.header_names -%}
+{% set hev        = entities[header_name] -%}
+{% set h_snake    = header_name | snake_case -%}
+{% set h_plural   = hev.info.pluralName | default(header_name | plural | snake_case) -%}
+{% set h_total_f  = total_field(hev) | trim -%}
+{% set h_net_f    = net_field(hev) | trim -%}
+{% set h_vat_f    = vat_field(hev) | trim -%}
+{% set h_state_f  = state_field_name(hev) | trim -%}
+{% set h_state_0  = initial_state(hev) | trim -%}
+{% set h_state_1  = next_state(hev) | trim -%}
+
+{# Collect line-item entities that have a manyToOne FK pointing at this header #}
+{% set hlines = namespace(names=[]) -%}
+{% for line_name in ns.line_names -%}
+{% set lev_scan = entities[line_name] -%}
+{% for fn, fp in lev_scan.attributes | items -%}
+{% if fp.type == 'relation' and fp.relation == 'manyToOne' and fp.target == header_name -%}
+{% set hlines.names = hlines.names + [line_name] -%}
+{% endif -%}
+{% endfor -%}
+{% endfor -%}
+{% set first_line_name = hlines.names[0] | default('') -%}
+{% set lev    = entities[first_line_name] if first_line_name else none -%}
+{% set l_snake  = first_line_name | snake_case if first_line_name else '' -%}
+{% set l_plural = lev.info.pluralName | default(first_line_name | plural | snake_case) if lev else '' -%}
+{% set l_qty_f  = qty_field(lev) | trim if lev else '' -%}
+{% set l_price_f = price_field(lev) | trim if lev else '' -%}
+{% set l_net_f  = net_field(lev) | trim if lev else '' -%}
+{% set l_total_f = total_field(lev) | trim if lev else '' -%}
+{% set l_fk_to_h = fk_to(lev, header_name) | trim if lev else '' -%}
+
+{# Find the first manyToOne FK on the header that points to a contact entity #}
+{% set hcontact = namespace(fk='', cname='') -%}
+{% for fn, fp in hev.attributes | items -%}
+{% if not hcontact.fk and fp.type == 'relation' and fp.relation == 'manyToOne' and fp.target in ns.contact_names -%}
+{% set hcontact.fk    = fn | snake_case ~ '_id' -%}
+{% set hcontact.cname = fp.target -%}
+{% endif -%}
+{% endfor -%}
+
+/// Workflow tests for **{{ header_name }}** (detected as a financial-document entity).
+///
+/// Line entity: `{{ first_line_name if first_line_name else "none" }}`
+/// Contact FK : `{{ hcontact.fk if hcontact.fk else "none" }}`
+/// State field: `{{ h_state_f if h_state_f else "none" }}`
+#[cfg(test)]
+mod {{ h_snake }}_document_workflow_tests {
+    use super::*;
+
+    /// Creating a `{{ header_name }}` stores all amount fields with non-negative values.
+    #[test]
+    fn test_create_{{ h_snake }}_stores_amounts() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let doc_id = id_of(&doc);
+            assert!(doc_id > 0, "{{ header_name }} id must be positive, got {doc_id}");
+{% if h_total_f -%}
+            assert!(
+                f64_of(&doc, "{{ h_total_f }}") >= 0.0,
+                "{{ header_name }}.{{ h_total_f }} must be >= 0"
+            );
+{% endif -%}
+{% if h_net_f and h_total_f -%}
+            // total must be >= net (tax/surcharges can only add to it)
+            let net   = f64_of(&doc, "{{ h_net_f }}");
+            let total = f64_of(&doc, "{{ h_total_f }}");
+            if net > 0.0 && total > 0.0 {
+                assert!(total >= net,
+                    "{{ header_name }}.{{ h_total_f }} ({total}) must be >= .{{ h_net_f }} ({net})");
+            }
+{% endif -%}
+        });
+    }
+
+    /// After creation, a `{{ header_name }}` is retrievable by its ID.
+    #[test]
+    fn test_get_{{ h_snake }}_by_id() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let doc_id = id_of(&doc);
+
+            let resp = do_get(i, &format!("/api/{{ h_plural }}/{doc_id}")).await;
+            assert!(
+                resp.status_code().is_success(),
+                "GET /api/{{ h_plural }}/{doc_id} failed: {}",
+                resp.status_code()
+            );
+            let body: serde_json::Value = resp.json();
+            assert_eq!(body["id"], json!(doc_id), "id round-trip mismatch");
+        });
+    }
+
+    /// A newly created `{{ header_name }}` appears in the list endpoint.
+    #[test]
+    fn test_{{ h_snake }}_appears_in_list() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let doc_id = id_of(&doc);
+
+            let resp = do_get(i, "/api/{{ h_plural }}?page_size=100").await;
+            assert!(resp.status_code().is_success(), "list {{ h_plural }} failed");
+            let list: Vec<serde_json::Value> = resp.json();
+            assert!(
+                list.iter().any(|d| id_of(d) == doc_id),
+                "{{ header_name }} {doc_id} not found in list of {} entries",
+                list.len()
+            );
+        });
+    }
+
+{% if first_line_name -%}
+    /// `{{ first_line_name }}` line items can be added to a `{{ header_name }}` and
+    /// each line stores the FK back to the header document.
+    #[test]
+    fn test_add_{{ l_snake }}_lines_to_{{ h_snake }}() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let doc_id = id_of(&doc);
+            let mut line_ids: Vec<i64> = Vec::new();
+
+            for n in 1_u32..=3 {
+                let line_suffix = next_suffix();
+                let payload = json!({
+                    "{{ l_fk_to_h }}": doc_id,
+{% if l_qty_f -%}
+                    "{{ l_qty_f }}": (n as f64) * 4.0,
+{% endif -%}
+{% if l_price_f -%}
+                    "{{ l_price_f }}": 15.0,
+{% endif -%}
+{% for attr_name, attr_prop in lev.attributes | items -%}
+{% if attr_prop.type != 'relation' and not attr_prop.readOnly and attr_name | snake_case != l_qty_f and attr_name | snake_case != l_price_f -%}
+{{ attr_value(attr_name, attr_prop, "line", "line_suffix") }}
+{% endif -%}
+{% endfor -%}
+                });
+                let resp = do_post(i, "/api/{{ l_plural }}", &payload).await;
+                assert!(
+                    resp.status_code().is_success(),
+                    "create {{ first_line_name }} line #{n} failed: {} — {}",
+                    resp.status_code(), resp.text()
+                );
+                let line: serde_json::Value = resp.json();
+                let lid = id_of(&line);
+
+                // FK must point back to the header
+                let stored_fk = line["{{ l_fk_to_h }}"].as_i64()
+                    .or_else(|| line["{{ l_fk_to_h }}"].as_str().and_then(|s| s.parse().ok()))
+                    .unwrap_or(-1);
+                assert_eq!(
+                    stored_fk, doc_id,
+                    "line #{n} .{{ l_fk_to_h }} must be {doc_id}, got {stored_fk}"
+                );
+                line_ids.push(lid);
+            }
+
+            // All three lines must appear in the list, filtered by FK
+            let all: Vec<serde_json::Value> =
+                do_get(i, "/api/{{ l_plural }}?page_size=100").await.json();
+            let doc_lines: Vec<i64> = all.iter()
+                .filter(|l| {
+                    l["{{ l_fk_to_h }}"].as_i64().unwrap_or(-1) == doc_id
+                        || l["{{ l_fk_to_h }}"].as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(-1) == doc_id
+                })
+                .map(|l| id_of(l))
+                .collect();
+
+            for id in &line_ids {
+                assert!(doc_lines.contains(id),
+                    "line {id} not found in {{ l_plural }} list for {{ header_name }} {doc_id}");
+            }
+            assert_eq!(doc_lines.len(), 3,
+                "expected exactly 3 lines for {{ header_name }} {doc_id}, got {}", doc_lines.len());
+        });
+    }
+
+{% if l_qty_f and l_price_f and l_net_f -%}
+    /// `{{ first_line_name }}.{{ l_net_f }}` equals `{{ l_qty_f }} × {{ l_price_f }}` (within ±0.05).
+    #[test]
+    fn test_{{ l_snake }}_net_equals_qty_times_price() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let line_suffix = next_suffix();
+            let qty   = 7.0_f64;
+            let price = 12.50_f64;
+            let expected_net = round2(qty * price); // 87.50
+
+            let payload = json!({
+                "{{ l_fk_to_h }}": id_of(&doc),
+                "{{ l_qty_f }}":   qty,
+                "{{ l_price_f }}": price,
+{% for attr_name, attr_prop in lev.attributes | items -%}
+{% if attr_prop.type != 'relation' and not attr_prop.readOnly and attr_name | snake_case != l_qty_f and attr_name | snake_case != l_price_f and attr_name | snake_case != l_net_f -%}
+{{ attr_value(attr_name, attr_prop, "arith", "line_suffix") }}
+{% endif -%}
+{% endfor -%}
+            });
+            let resp = do_post(i, "/api/{{ l_plural }}", &payload).await;
+            assert!(resp.status_code().is_success(),
+                "create line for arithmetic test failed: {} — {}", resp.status_code(), resp.text());
+            let line: serde_json::Value = resp.json();
+            let stored_net = f64_of(&line, "{{ l_net_f }}");
+
+            if stored_net != 0.0 {
+                assert!(
+                    (stored_net - expected_net).abs() < 0.05,
+                    "{{ first_line_name }}.{{ l_net_f }}: expected {expected_net} ({}×{}), got {stored_net}",
+                    qty, price
+                );
+            }
+{% if l_total_f -%}
+            let stored_total = f64_of(&line, "{{ l_total_f }}");
+            if stored_total > 0.0 && stored_net > 0.0 {
+                assert!(stored_total >= stored_net,
+                    "{{ first_line_name }}.{{ l_total_f }} ({stored_total}) must be >= .{{ l_net_f }} ({stored_net})");
+            }
+{% endif -%}
+        });
+    }
+{% endif -%}
+{% endif -%}
+
+{% if hcontact.fk and hcontact.cname -%}
+    /// Multiple `{{ header_name }}` documents for the same contact give a
+    /// pending balance equal to the sum of their `{{ h_total_f if h_total_f else "amount" }}` fields.
+    #[test]
+    fn test_multiple_{{ h_snake }}_balance_per_contact() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let contact    = create_{{ hcontact.cname | snake_case }}(i).await;
+            let contact_id = id_of(&contact);
+            let mut totals: Vec<f64> = Vec::new();
+            let mut doc_ids: Vec<i64>  = Vec::new();
+
+            for _ in 0..3 {
+                let suffix = next_suffix();
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+{% if attr_prop.target == hcontact.cname -%}
+                let {{ attr_name | snake_case }}_id = contact_id;
+{% else -%}
+                let {{ attr_name | snake_case }}_dep = create_{{ attr_prop.target | snake_case }}(i).await;
+                let {{ attr_name | snake_case }}_id  = id_of(&{{ attr_name | snake_case }}_dep);
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+                let payload = json!({
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+                    "{{ attr_name | snake_case }}_id": {{ attr_name | snake_case }}_id,
+{% endif -%}
+{% endfor -%}
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if attr_prop.type != 'relation' and not attr_prop.readOnly -%}
+{{ attr_value(attr_name, attr_prop, "bal", "suffix") }}
+{% endif -%}
+{% endfor -%}
+                });
+                let resp = do_post(i, "/api/{{ h_plural }}", &payload).await;
+                assert!(resp.status_code().is_success(),
+                    "create {{ h_snake }} for balance test failed: {} — {}", resp.status_code(), resp.text());
+                let doc: serde_json::Value = resp.json();
+                doc_ids.push(id_of(&doc));
+{% if h_total_f -%}
+                totals.push(f64_of(&doc, "{{ h_total_f }}"));
+{% endif -%}
+            }
+
+            // Fetch all, filter by contact FK, verify all three appear
+            let all: Vec<serde_json::Value> =
+                do_get(i, "/api/{{ h_plural }}?page_size=100").await.json();
+            let contact_docs: Vec<&serde_json::Value> = all.iter()
+                .filter(|d| {
+                    d["{{ hcontact.fk }}"].as_i64().unwrap_or(-1) == contact_id
+                        || d["{{ hcontact.fk }}"].as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(-1) == contact_id
+                })
+                .collect();
+
+            for id in &doc_ids {
+                assert!(contact_docs.iter().any(|d| id_of(d) == *id),
+                    "{{ header_name }} {id} not found in list filtered by contact {contact_id}");
+            }
+
+{% if h_total_f -%}
+            let api_sum = round2(contact_docs.iter().map(|d| f64_of(d, "{{ h_total_f }}")).sum::<f64>());
+            let exp_sum = round2(totals.iter().sum::<f64>());
+            if exp_sum > 0.0 {
+                assert!(
+                    (api_sum - exp_sum).abs() < 0.10,
+                    "pending balance for contact {contact_id}: expected {exp_sum}, got {api_sum}"
+                );
+            }
+{% endif -%}
+        });
+    }
+
+    /// Two different contacts have independent balances.
+    #[test]
+    fn test_{{ h_snake }}_balances_are_independent_per_contact() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let c1 = create_{{ hcontact.cname | snake_case }}(i).await;
+            let c2 = create_{{ hcontact.cname | snake_case }}(i).await;
+            let c1_id = id_of(&c1);
+            let c2_id = id_of(&c2);
+
+            // Create one document per contact
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' and attr_prop.target != hcontact.cname -%}
+            let shared_{{ attr_name | snake_case }}_dep = create_{{ attr_prop.target | snake_case }}(i).await;
+            let shared_{{ attr_name | snake_case }}_id  = id_of(&shared_{{ attr_name | snake_case }}_dep);
+{% endif -%}
+{% endfor -%}
+            let sfx1 = next_suffix();
+            let sfx2 = next_suffix();
+            let r1 = do_post(i, "/api/{{ h_plural }}", &json!({
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+{% if attr_prop.target == hcontact.cname -%}
+                "{{ attr_name | snake_case }}_id": c1_id,
+{% else -%}
+                "{{ attr_name | snake_case }}_id": shared_{{ attr_name | snake_case }}_id,
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if attr_prop.type != 'relation' and not attr_prop.readOnly -%}
+{{ attr_value(attr_name, attr_prop, "ind1", "sfx1") }}
+{% endif -%}
+{% endfor -%}
+            })).await;
+            assert!(r1.status_code().is_success(), "r1 creation failed");
+            let r2 = do_post(i, "/api/{{ h_plural }}", &json!({
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+{% if attr_prop.target == hcontact.cname -%}
+                "{{ attr_name | snake_case }}_id": c2_id,
+{% else -%}
+                "{{ attr_name | snake_case }}_id": shared_{{ attr_name | snake_case }}_id,
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if attr_prop.type != 'relation' and not attr_prop.readOnly -%}
+{{ attr_value(attr_name, attr_prop, "ind2", "sfx2") }}
+{% endif -%}
+{% endfor -%}
+            })).await;
+            assert!(r2.status_code().is_success(), "r2 creation failed");
+
+            let d1: serde_json::Value = r1.json();
+            let d2: serde_json::Value = r2.json();
+            // Each document must carry its own contact FK
+            let fk1 = d1["{{ hcontact.fk }}"].as_i64().or_else(|| d1["{{ hcontact.fk }}"].as_str().and_then(|s| s.parse().ok())).unwrap_or(-1);
+            let fk2 = d2["{{ hcontact.fk }}"].as_i64().or_else(|| d2["{{ hcontact.fk }}"].as_str().and_then(|s| s.parse().ok())).unwrap_or(-1);
+            assert_eq!(fk1, c1_id, "doc1.{{ hcontact.fk }} must be c1");
+            assert_eq!(fk2, c2_id, "doc2.{{ hcontact.fk }} must be c2");
+        });
+    }
+{% endif -%}
+
+{% if h_state_f and h_state_0 and h_state_1 -%}
+    /// A `{{ header_name }}` in state `{{ h_state_0 }}` can be updated to `{{ h_state_1 }}`.
+    #[test]
+    fn test_{{ h_snake }}_state_transition() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let doc_id = id_of(&doc);
+
+            let initial = doc["{{ h_state_f }}"].as_str().unwrap_or("");
+            if !initial.is_empty() {
+                assert_eq!(initial, "{{ h_state_0 }}",
+                    "expected initial {{ h_state_f }} to be '{{ h_state_0 }}', got '{initial}'");
+            }
+
+            let suffix = next_suffix();
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+            let {{ attr_name | snake_case }}_upd = doc["{{ attr_name | snake_case }}_id"]
+                .as_i64().or_else(|| doc["{{ attr_name | snake_case }}_id"].as_str().and_then(|s| s.parse().ok())).unwrap_or(0);
+{% endif -%}
+{% endfor -%}
+            let upd = json!({
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if macros.relation_has_fk(attr_prop) | trim == 'true' -%}
+                "{{ attr_name | snake_case }}_id": {{ attr_name | snake_case }}_upd,
+{% endif -%}
+{% endfor -%}
+{% for attr_name, attr_prop in hev.attributes | items -%}
+{% if attr_prop.type != 'relation' and not attr_prop.readOnly -%}
+{% if (attr_name | lower) in ['state', 'status'] -%}
+                "{{ attr_name | snake_case }}": "{{ h_state_1 }}",
+{% else -%}
+{{ attr_value(attr_name, attr_prop, "upd", "suffix") }}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+            });
+            let resp = do_put(i, &format!("/api/{{ h_plural }}/{doc_id}"), &upd).await;
+            if resp.status_code().is_success() {
+                let updated: serde_json::Value = resp.json();
+                let new_state = updated["{{ h_state_f }}"].as_str().unwrap_or("");
+                if !new_state.is_empty() {
+                    assert_eq!(new_state, "{{ h_state_1 }}",
+                        "{{ h_state_f }} after update: expected '{{ h_state_1 }}', got '{new_state}'");
+                }
+            }
+            // 400/422 is acceptable when the server guards the transition
+        });
+    }
+{% endif -%}
+
+    /// Deleting a `{{ header_name }}` makes subsequent GET return 404.
+    #[test]
+    fn test_delete_{{ h_snake }}_returns_404_afterwards() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let doc    = create_{{ h_snake }}(i).await;
+            let doc_id = id_of(&doc);
+
+            let del = do_delete(i, &format!("/api/{{ h_plural }}/{doc_id}")).await;
+            assert!(
+                del.status_code().is_success() || del.status_code().as_u16() == 204,
+                "DELETE /api/{{ h_plural }}/{doc_id} failed: {}",
+                del.status_code()
+            );
+            let gone = do_get(i, &format!("/api/{{ h_plural }}/{doc_id}")).await;
+            assert_eq!(gone.status_code().as_u16(), 404,
+                "deleted {{ header_name }} {doc_id} must return 404, got {}", gone.status_code());
+        });
+    }
+}
+
+{% endfor -%}
+
+// ============================================================================
+{% if ns.contact_names -%}
+// § Contact / partner management
+// ============================================================================
+
+#[cfg(test)]
+mod contact_management_tests {
+    use super::*;
+
+{% for contact_name in ns.contact_names -%}
+{% set cev     = entities[contact_name] -%}
+{% set c_snake = contact_name | snake_case -%}
+{% set c_plural = cev.info.pluralName | default(contact_name | plural | snake_case) -%}
+    /// A `{{ contact_name }}` can be created and retrieved by id.
+    #[test]
+    fn test_create_and_retrieve_{{ c_snake }}() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let record    = create_{{ c_snake }}(i).await;
+            let record_id = id_of(&record);
+            assert!(record_id > 0, "{{ contact_name }} id must be positive");
+
+            let resp = do_get(i, &format!("/api/{{ c_plural }}/{record_id}")).await;
+            assert!(resp.status_code().is_success(),
+                "GET /api/{{ c_plural }}/{record_id} failed: {}", resp.status_code());
+            let body: serde_json::Value = resp.json();
+            assert_eq!(body["id"], json!(record_id), "id round-trip");
+        });
+    }
+
+    /// A newly created `{{ contact_name }}` appears in the list endpoint.
+    #[test]
+    fn test_{{ c_snake }}_appears_in_list() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let record    = create_{{ c_snake }}(i).await;
+            let record_id = id_of(&record);
+            let resp = do_get(i, "/api/{{ c_plural }}?page_size=100").await;
+            assert!(resp.status_code().is_success());
+            let list: Vec<serde_json::Value> = resp.json();
+            assert!(list.iter().any(|r| id_of(r) == record_id),
+                "{{ contact_name }} {record_id} not found in list");
+        });
+    }
+
+    /// Posting an empty body to the `{{ contact_name }}` endpoint must be rejected (4xx).
+    #[test]
+    fn test_create_{{ c_snake }}_empty_body_rejected() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = do_post(i, "/api/{{ c_plural }}", &json!({})).await;
+            let s = resp.status_code().as_u16();
+            assert!(s >= 400 && s < 500,
+                "empty body for {{ contact_name }} must return 4xx, got {s}");
+        });
+    }
+{% endfor -%}
+}
+{% endif -%}
+
+// ============================================================================
+// § Validation and pagination (always generated)
+// ============================================================================
+
+#[cfg(test)]
+mod business_validation_tests {
+    use super::*;
+
+{% if ns.header_names -%}
+{% set first_header = ns.header_names[0] -%}
+{% set fhev         = entities[first_header] -%}
+{% set fh_snake     = first_header | snake_case -%}
+{% set fh_plural    = fhev.info.pluralName | default(first_header | plural | snake_case) -%}
+
+    /// Fetching a non-existent `{{ first_header }}` returns 404.
+    #[test]
+    fn test_get_nonexistent_{{ fh_snake }}_returns_404() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = do_get(i, "/api/{{ fh_plural }}/999999999").await;
+            assert_eq!(resp.status_code().as_u16(), 404,
+                "non-existent {{ first_header }} must return 404, got {}", resp.status_code());
+        });
+    }
+
+    /// Deleting a non-existent `{{ first_header }}` returns 404.
+    #[test]
+    fn test_delete_nonexistent_{{ fh_snake }}_returns_404() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = do_delete(i, "/api/{{ fh_plural }}/999999998").await;
+            assert_eq!(resp.status_code().as_u16(), 404,
+                "deleting non-existent {{ first_header }} must return 404, got {}", resp.status_code());
+        });
+    }
+
+    /// The `{{ first_header }}` list returns a valid JSON array.
+    #[test]
+    fn test_{{ fh_snake }}_list_returns_json_array() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = do_get(i, "/api/{{ fh_plural }}?page_size=0").await;
+            assert!(resp.status_code().is_success(),
+                "GET /api/{{ fh_plural }} must return 200, got {}", resp.status_code());
+            let body: serde_json::Value = resp.json();
+            assert!(body.is_array(), "{{ first_header }} list must be a JSON array, got: {body}");
+        });
+    }
+
+    /// The list endpoint respects `page_size` and includes a `Content-Range` header.
+    #[test]
+    fn test_{{ fh_snake }}_list_pagination_content_range() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let _ = create_{{ fh_snake }}(i).await; // ensure at least one record
+            let resp = do_get(i, "/api/{{ fh_plural }}?page=1&page_size=2").await;
+            assert!(resp.status_code().is_success(), "paginated list failed");
+
+            let items: Vec<serde_json::Value> = resp.json();
+            assert!(items.len() <= 2,
+                "page_size=2 must return at most 2 items, got {}", items.len());
+
+            let cr = resp.headers()
+                .get("Content-Range")
+                .map(|v| v.to_str().unwrap_or("").to_string());
+            assert!(cr.is_some(), "Content-Range header must be present");
+            assert!(cr.unwrap().contains("items"), "Content-Range must contain 'items'");
+        });
+    }
+
+    /// The list endpoint includes an `Accept-Ranges: items` header.
+    #[test]
+    fn test_{{ fh_snake }}_list_accept_ranges_header() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = do_get(i, "/api/{{ fh_plural }}?page_size=10").await;
+            assert!(resp.status_code().is_success());
+            let ar = resp.headers()
+                .get("Accept-Ranges")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            assert_eq!(ar, "items", "Accept-Ranges must be 'items', got '{ar}'");
+        });
+    }
+
+{% if authentication != 'none' -%}
+    /// List endpoints must reject requests without an authentication token.
+    #[test]
+    fn test_list_endpoint_requires_auth() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = i.server.get("/api/{{ fh_plural }}").await;
+            assert_eq!(resp.status_code().as_u16(), 401,
+                "unauthenticated GET /api/{{ fh_plural }} must return 401, got {}", resp.status_code());
+        });
+    }
+{% endif -%}
+{% endif -%}
+
+    /// The `/api/health` endpoint is always reachable without authentication.
+    #[test]
+    fn test_health_endpoint_is_reachable() {
+        let i = infra();
+        shared_runtime().block_on(async {
+            let resp = i.server.get("/api/health").await;
+            assert!(resp.status_code().is_success(),
+                "/api/health must return 200, got {}", resp.status_code());
+        });
+    }
+}

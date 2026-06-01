@@ -1,4 +1,3 @@
-{% if protocol == 'grpc' -%}
 import { createClient, type Client } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
 import type { DataProvider, GetListParams, GetOneParams, CreateParams, UpdateParams, DeleteParams, GetManyParams, GetManyReferenceParams } from 'ra-core';
@@ -203,4 +202,3 @@ export const grpcDataProvider: DataProvider = {
         return { data: params.ids };
     },
 };
-{% endif -%}

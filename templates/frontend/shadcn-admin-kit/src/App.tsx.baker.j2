@@ -1,8 +1,10 @@
 import { Admin } from "@/components/admin";
-{% if 'rest' in protocols  -%}
-import { dataProvider } from '@/lib/dataProvider';
-{% elif 'grpc' in protocols -%}
+import { NotFoundPage } from "@/pages/not-found-page";
+import { ServerErrorPage } from "@/pages/server-error-page";
+{% if frontend_protocol | default('rest') == 'grpc-web' -%}
 import { grpcDataProvider } from '@/lib/grpcDataProvider';
+{% else -%}
+import { dataProvider } from '@/lib/dataProvider';
 {% endif -%}
 {% if authentication != 'none' -%}
 import { authProvider } from '@/lib/authProvider';
@@ -15,17 +17,15 @@ import {Resource} from "ra-core";
 import {{ entity_name | camel_case }} from "./resources/{{ entity_name | snake_case }}"
 {% endfor %}
 
-{% if 'grpc' in protocols -%}
-const dataProvider = grpcDataProvider;
-{% endif %}
-
 function App() {
     return (
         <Admin
-            {% if 'rest' in protocols  -%}
-            dataProvider={dataProvider}
-            {% elif 'grpc' in protocols -%}
+            catchAll={NotFoundPage}
+            error={ServerErrorPage}
+            {% if frontend_protocol | default('rest') == 'grpc-web' -%}
             dataProvider={grpcDataProvider}
+            {% else -%}
+            dataProvider={dataProvider}
             {% endif -%}
             {% if authentication != 'none' -%}
             authProvider={authProvider}

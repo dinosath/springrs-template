@@ -1,12 +1,9 @@
 {% import "macros.jinja" as macros -%}
 //! Multi-tenant Row-Level Security (RLS) plugin.
 //!
-//! Uses the [`tenant-axum`] crate for tenant resolution and injects the
-//! resolved [`TenantId`] into request extensions via [`TenantLayer`].
-//!
 //! Provides:
-//! - [`TenantPlugin`] – registers the `TenantLayer` middleware.
-//! - [`CurrentTenant`] – axum extractor for the resolved tenant.
+//! - [`TenantPlugin`] – no-op summer plugin (kept for API compatibility).
+//! - [`TenantId`] – axum extractor for the resolved tenant.
 //! - [`set_tenant`] – executes `SET LOCAL app.current_tenant` on a DB
 //!   connection/transaction so PostgreSQL RLS policies take effect.
 //!
@@ -18,30 +15,85 @@
 //! 1. `X-Tenant-Id` HTTP header
 {% endif -%}
 
-use std::sync::Arc;
-
 use summer::async_trait;
-use summer::{app::AppBuilder, plugin::{Plugin, ComponentRegistry, MutableComponentRegistry}};
-use summer_web::{WebPlugin, RouterLayers};
+use summer::{app::AppBuilder, plugin::Plugin};
+use summer_web::WebPlugin;
 use sea_orm::{ConnectionTrait, Statement, DbBackend};
-use tenant_axum::{
-    CompositeTenantResolver, CurrentTenant, HeaderTenantResolver, TenantLayer,
-{% if authentication == 'jwt' -%}
-    JwtTenantResolver,
-{% endif -%}
-};
 
-pub use tenant_axum::CurrentTenant as TenantId;
+// ─── TenantId extractor ────────────────────────────────────────────────────────
+
+/// Tenant identifier extracted from the request.
+///
+/// Resolution order:
+/// 1. `X-Tenant-Id` HTTP header
+{% if authentication == 'jwt' -%}
+/// 2. JWT `user_id` claim (implicit personal tenant)
+{% endif -%}
+#[derive(Clone, Debug)]
+pub struct TenantId(pub String);
+
+impl TenantId {
+    /// Returns the tenant identifier as a `&str`.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for TenantId {
+    type Rejection = (axum::http::StatusCode, axum::Json<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        // 1. Try X-Tenant-Id header
+        if let Some(tenant) = parts
+            .headers
+            .get("x-tenant-id")
+            .and_then(|v| v.to_str().ok())
+        {
+            return Ok(TenantId(tenant.to_owned()));
+        }
+{% if authentication == 'jwt' %}
+        // 2. Fall back to JWT user_id claim
+        use axum::http::header::AUTHORIZATION;
+        use webgates::codecs::Codec;
+        if let Some(token) = parts
+            .headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+        {
+            if let Some(auth) = crate::services::auth_plugin::AUTH_STATE.get() {
+                if let Ok(claims) = auth.jwt_codec.decode(token.as_bytes()) {
+                    return Ok(TenantId(claims.custom_claims.user_id.clone()));
+                }
+            }
+        }
+{% endif %}
+        Err((
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error": "Missing tenant identifier – provide X-Tenant-Id header"})),
+        ))
+    }
+}
 
 // ─── set_tenant helper ─────────────────────────────────────────────────────────
 
-/// Executes `SET LOCAL app.current_tenant = '<tenant_id>'` on the given
-/// connection so that PostgreSQL RLS policies filter rows for this tenant.
+/// Switches to the `app_rls_user` role and sets the current-tenant GUC so that
+/// PostgreSQL RLS policies filter rows for this tenant.
 ///
-/// **Must** be called inside a transaction (`BEGIN … COMMIT`) for `SET LOCAL`
-/// to be scoped correctly.  Outside a transaction the setting persists for the
-/// session — which is usually *not* what you want in a connection-pooled setup.
-pub async fn set_tenant<C: ConnectionTrait>(db: &C, tenant: &CurrentTenant) -> Result<(), sea_orm::DbErr> {
+/// Both operations are scoped to the current transaction (`SET LOCAL`/`true`),
+/// so they are automatically undone when the transaction commits or rolls back.
+///
+/// **Why SET LOCAL ROLE?**  PostgreSQL superusers bypass ALL row-level security
+/// policies even when `FORCE ROW LEVEL SECURITY` is set.  By switching to the
+/// non-superuser `app_rls_user` role within the transaction, the RLS policies
+/// are evaluated normally.
+pub async fn set_tenant<C: ConnectionTrait>(db: &C, tenant: &TenantId) -> Result<(), sea_orm::DbErr> {
+    // Switch to the non-superuser role so RLS is enforced (superusers bypass RLS).
+    db.execute_unprepared("SET LOCAL ROLE app_rls_user").await?;
+    // Set the tenant GUC for the current transaction.
     let stmt = Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT set_config('app.current_tenant', $1, true)",
@@ -53,42 +105,17 @@ pub async fn set_tenant<C: ConnectionTrait>(db: &C, tenant: &CurrentTenant) -> R
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-/// Summer plugin that registers the [`TenantLayer`] middleware for tenant
-/// resolution.
+/// Summer plugin for multi-tenant Row-Level Security.
+///
+/// Tenant resolution happens directly in the [`TenantId`] extractor on every
+/// protected route – no additional middleware is needed.
 pub struct TenantPlugin;
 
 #[async_trait]
 impl Plugin for TenantPlugin {
-    async fn build(&self, app: &mut AppBuilder) {
-{% if authentication == 'jwt' -%}
-        let resolver = CompositeTenantResolver::new()
-            .add(HeaderTenantResolver::default())
-            .add(JwtTenantResolver::new("user_id"));
-{% else -%}
-        let resolver = CompositeTenantResolver::new()
-            .add(HeaderTenantResolver::default());
-{% endif -%}
-
-        let tenant_layer = TenantLayer::new(resolver)
-            .with_skip_paths(vec!["/api/health", "/api/auth/register", "/api/auth/login", "/api/auth/logout", "/api/auth/me"]);
-
-        let layer_fn: Arc<dyn Fn(summer_web::Router) -> summer_web::Router + Send + Sync> =
-            Arc::new(move |router| {
-                router.layer(tenant_layer.clone())
-            });
-
-        match app.get_component_ref::<RouterLayers>() {
-            Some(layers) => {
-                let mut layers: RouterLayers = (*layers).clone();
-                layers.push(layer_fn);
-                app.add_component(layers);
-            }
-            None => {
-                let mut layers = RouterLayers::default();
-                layers.push(layer_fn);
-                app.add_component(layers);
-            }
-        }
+    async fn build(&self, _app: &mut AppBuilder) {
+        // Tenant resolution is handled directly in the TenantId extractor.
+        // No middleware registration is required.
     }
 
     fn dependencies(&self) -> Vec<&str> {

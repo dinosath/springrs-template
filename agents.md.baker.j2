@@ -36,7 +36,7 @@ The application uses **axum** as a standalone HTTP framework and includes:
 {% endif -%}
 {% if orm == 'seaorm' and database == 'postgres' %}
 - [SeaORM](https://www.sea-ql.org/SeaORM/) for database access (PostgreSQL)
-{% if use_seaorm_migrations %}
+{% if add_migrations and orm == 'seaorm' %}
 - SeaORM migrations (`migration/` crate) run automatically at startup{% if backend == 'spring-rs' %} via `SeaOrmMigrationPlugin`{% endif %}
 
 {% endif %}
@@ -68,7 +68,7 @@ The application uses **axum** as a standalone HTTP framework and includes:
 │   ├── models/                  # SeaORM entity definitions and request/response DTOs
 {% endif %}
 │   └── services/                # Business-logic plugins (e.g. SeaOrm migration plugin)
-{% if use_seaorm_migrations %}
+{% if add_migrations and orm == 'seaorm' %}
 ├── migration/                   # SeaORM migration crate
 {% endif %}
 {% if 'grpc' in protocols %}

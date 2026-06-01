@@ -1,4 +1,4 @@
-use gloo_net::http::Request;
+use gloo_net::http::{Request, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -28,7 +28,7 @@ pub fn clear_auth_token() {
     }
 }
 
-fn apply_auth(req: Request) -> Request {
+fn apply_auth(req: RequestBuilder) -> RequestBuilder {
     if let Some(token) = get_auth_token() {
         req.header("Authorization", &format!("Bearer {}", token))
     } else {
@@ -36,15 +36,17 @@ fn apply_auth(req: Request) -> Request {
     }
 }
 {% else %}
-fn apply_auth(req: Request) -> Request {
+fn apply_auth(req: RequestBuilder) -> RequestBuilder {
     req
 }
 {% endif %}
 
 /// Perform a GET request and deserialise the JSON body.
 pub async fn get<T: DeserializeOwned>(path: &str) -> Result<T, String> {
-    let req = apply_auth(Request::get(path));
-    let resp = req.send().await.map_err(|e| format!("GET {path} failed: {e}"))?;
+    let req = apply_auth(Request::get(path))
+        .build()
+        .map_err(|e| format!("build GET {path}: {e}"))?;
+    let resp = req.send().await.map_err(|e| format!("GET {path} failed: {e}"))?
     if resp.ok() {
         resp.json::<T>().await.map_err(|e| format!("parse GET {path}: {e}"))
     } else {
@@ -86,7 +88,9 @@ pub async fn put<B: Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Res
 
 /// Perform a DELETE request (no response body expected).
 pub async fn delete(path: &str) -> Result<(), String> {
-    let req = apply_auth(Request::delete(path));
+    let req = apply_auth(Request::delete(path))
+        .build()
+        .map_err(|e| format!("build DELETE {path}: {e}"))?;
     let resp = req.send().await.map_err(|e| format!("DELETE {path} failed: {e}"))?;
     if resp.ok() {
         Ok(())

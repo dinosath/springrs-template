@@ -6,16 +6,19 @@ MISE_TRUSTED_CONFIG_PATHS = "$PWD/generated"
 
 [tasks.generate]
 description = "Generate the project files"
-run = "baker . ./generated/$ANSWER --answers-file samples/answers-$ANSWER.json --force --non-interactive --skip-confirms all"
+run = "baker generate . ./generated/$ANSWER --answers-file samples/answers-$ANSWER.json --force --non-interactive --skip-confirms all"
 
 [tasks.e2e]
 description = "Run e2e tests"
-run = "(cd generated/$ANSWER && mise run build-and-test)"
+run = "(cd generated/$ANSWER && mise trust --yes && mise run build-and-test)"
+
+[tasks.e2e-frontend]
+description = "Run e2e tests for variants with a frontend (builds frontend first)"
+run = "(cd generated/$ANSWER && mise trust --yes && mise run build-frontend-and-test)"
 
 [tasks.test]
 description = "Run tests"
-run = "(cd generated/$ANSWER && mise run test)"
-
+run = "(cd generated/$ANSWER && mise trust --yes && mise run test)"
 [tasks.rest]
 description = "Generate and build rest sample"
 env.ANSWER = "rest"
@@ -30,12 +33,12 @@ run = [{ task = "generate"},{ task = "e2e" }]
 [tasks.rest-shadcn]
 description = "Generate and build rest-shadcn sample"
 env.ANSWER = "rest-shadcn"
-run = [{ task = "generate"},{ task = "e2e" }]
+run = [{ task = "generate"},{ task = "e2e-frontend" }]
 
 [tasks.rest-leptos]
 description = "Generate and build rest-leptos sample (Leptos WASM frontend)"
 env.ANSWER = "rest-leptos"
-run = [{ task = "generate"},{ task = "e2e" }]
+run = [{ task = "generate"},{ task = "e2e-frontend" }]
 
 [tasks.grpc]
 description = "Generate and build grpc sample"
@@ -53,8 +56,15 @@ env.ANSWER = "axum-diesel"
 run = [{ task = "generate"},{ task = "e2e" }]
 
 [tasks.all]
-description = "Generate and build all samples"
-depends = ["rest", "rest-jwt", "rest-shadcn", "rest-leptos", "grpc", "rest-rls"]
+description = "Generate and build all samples (sequential to avoid OOM)"
+run = [
+    { task = "rest" },
+    { task = "rest-jwt" },
+    { task = "rest-shadcn" },
+    { task = "rest-leptos" },
+    { task = "grpc" },
+    { task = "rest-rls" },
+]
 
 [tasks.clippy]
 description = "Run clippy on a generated variant"

@@ -19,9 +19,15 @@ impl AppState {
 {% elif orm == 'diesel' -%}
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::PgConnection;
+{% if add_migrations -%}
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+{% endif -%}
 
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
+{% if add_migrations -%}
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+{% endif %}
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Pool,
@@ -36,6 +42,13 @@ impl AppState {
             .max_size(10)
             .build(manager)
             .expect("failed to create database pool");
+        {% if add_migrations -%}
+        {
+            let mut conn = pool.get().expect("failed to get migration connection");
+            conn.run_pending_migrations(MIGRATIONS)
+                .expect("diesel migrations failed");
+        }
+        {% endif -%}
         Self { pool }
     }
 }

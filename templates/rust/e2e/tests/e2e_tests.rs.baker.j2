@@ -218,7 +218,11 @@ async fn setup_{{ entity_snake }}(base_url: &str, client: &reqwest::Client) -> V
         "{{ attr_name | snake_case }}": "2024-01-01T00:00:00",
             {% endif -%}
             {% else -%}
+            {% if attr_prop.maxLength is defined and attr_prop.maxLength < 20 -%}
+        "{{ attr_name | snake_case }}": "{{ ("t_" + (attr_name | snake_case))[:attr_prop.maxLength] }}",
+            {% else -%}
         "{{ attr_name | snake_case }}": "test_{{ entity_snake }}_{{ attr_name | snake_case }}",
+            {% endif -%}
             {% endif -%}
         {% elif attr_prop.type == 'text' -%}
         "{{ attr_name | snake_case }}": "test {{ entity_snake }} {{ attr_name | snake_case }} content",
@@ -354,7 +358,11 @@ mod {{ entity_snake }}_crud {
             "{{ attr_name | snake_case }}": "2024-06-01T00:00:00",
             {% endif -%}
                 {% else -%}
+                {% if attr_prop.maxLength is defined and attr_prop.maxLength < 20 -%}
+            "{{ attr_name | snake_case }}": "{{ ("u_" + (attr_name | snake_case))[:attr_prop.maxLength] }}",
+                {% else -%}
             "{{ attr_name | snake_case }}": "updated_{{ entity_snake }}_{{ attr_name | snake_case }}",
+                {% endif -%}
                 {% endif -%}
             {% elif attr_prop.type == 'text' -%}
             "{{ attr_name | snake_case }}": "updated {{ entity_snake }} {{ attr_name | snake_case }} content",

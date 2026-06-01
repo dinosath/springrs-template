@@ -78,7 +78,8 @@ fn infra() -> &'static TestInfra {
                 "postgres://postgres:postgres@127.0.0.1:{}/postgres",
                 db_port
             );
-            std::env::set_var("DATABASE_URL", &database_url);
+            // SAFETY: called once at test setup before any thread reads DATABASE_URL
+            unsafe { std::env::set_var("DATABASE_URL", &database_url); }
 {% endif -%}
 {% if authentication == 'keycloak' -%}
             let keycloak = GenericImage::new("quay.io/keycloak/keycloak", "latest")
@@ -94,7 +95,8 @@ fn infra() -> &'static TestInfra {
                 .get_host_port_ipv4(8080)
                 .await
                 .expect("failed to get Keycloak port");
-            std::env::set_var("KEYCLOAK_URL", format!("http://127.0.0.1:{}", kc_port));
+            // SAFETY: called once at test setup before any thread reads KEYCLOAK_URL
+            unsafe { std::env::set_var("KEYCLOAK_URL", format!("http://127.0.0.1:{}", kc_port)); }
 {% endif -%}
 
             let app = create_app().await.expect("failed to create app");
@@ -318,14 +320,28 @@ async fn create_test_{{ entity_snake }}(i: &TestInfra) -> serde_json::Value {
     let suffix = next_suffix();
 {% for attr_name, attr_prop in entity.attributes | items -%}
 {% if macros.relation_has_fk(attr_prop)|trim == 'true' -%}
-    let {{ attr_name | snake_case }}_dep = create_test_{{ attr_prop.target | snake_case }}(i).await;
+{% set fk_target = attr_prop.target | replace("-","_") -%}
+{% if fk_target != entity_snake -%}
+{% set back_ref = namespace(found=false) -%}
+{% for te_name, te_data in entities | items -%}{% if te_name | snake_case == fk_target -%}{% for ta_name, ta_prop in te_data.attributes | items -%}{% if macros.relation_has_fk(ta_prop)|trim == 'true' and ta_prop.target | replace("-","_") == entity_snake -%}{% set back_ref.found = true -%}{% endif -%}{% endfor -%}{% endif -%}{% endfor -%}
+{% if not back_ref.found -%}
+    let {{ attr_name | snake_case }}_dep = create_test_{{ fk_target }}(i).await;
     let {{ attr_name | snake_case }}_id = {{ attr_name | snake_case }}_dep["id"].as_i64().or_else(|| {{ attr_name | snake_case }}_dep["id"].as_str().and_then(|s| s.parse().ok())).expect("FK dep {{ attr_name }} has no id");
+{% endif -%}
+{% endif -%}
 {% endif -%}
 {% endfor -%}
     let payload = json!({
 {% for attr_name, attr_prop in entity.attributes | items -%}
 {% if macros.relation_has_fk(attr_prop)|trim == 'true' -%}
+{% set fk_target = attr_prop.target | replace("-","_") -%}
+{% if fk_target != entity_snake -%}
+{% set back_ref = namespace(found=false) -%}
+{% for te_name, te_data in entities | items -%}{% if te_name | snake_case == fk_target -%}{% for ta_name, ta_prop in te_data.attributes | items -%}{% if macros.relation_has_fk(ta_prop)|trim == 'true' and ta_prop.target | replace("-","_") == entity_snake -%}{% set back_ref.found = true -%}{% endif -%}{% endfor -%}{% endif -%}{% endfor -%}
+{% if not back_ref.found -%}
             "{{ attr_name | snake_case }}_id": {{ attr_name | snake_case }}_id,
+{% endif -%}
+{% endif -%}
 {% endif -%}
 {% endfor -%}
 {{ test_payload(entity, "test") }}
@@ -370,7 +386,7 @@ mod {{ entity_snake }}_tests {
     }
 
     #[test]
-    fn test_list_{{ entity_plural }}() {
+    fn test_list_{{ entity_plural | replace("-", "_") }}() {
         let i = infra();
         shared_runtime().block_on(async {
             let _ = create_test_{{ entity_snake }}(i).await;

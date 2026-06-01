@@ -1,0 +1,17 @@
+{%- import "macros.jinja" as macros -%}
+{%- set schema_name = db_schema | default('public') | trim -%}
+-- Rollback: drop everything created by the up migration (reverse order).
+
+{% for relation in macros.get_m2m_relations(entities) | split(',') | reverse -%}
+{% if relation | trim != '' -%}
+DROP TABLE IF EXISTS {{ schema_name }}.{{ relation | trim }} CASCADE;
+{% endif -%}
+{% endfor -%}
+
+{% for entity_name, entity in entities | items | sort(attribute="1.priority") | reverse -%}
+{% if entity.attributes -%}
+DROP TABLE IF EXISTS {{ schema_name }}.{{ entity_name | table_case }} CASCADE;
+{% endif -%}
+{% endfor -%}
+
+DROP FUNCTION IF EXISTS update_last_updated_column() CASCADE;

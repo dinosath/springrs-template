@@ -65,7 +65,7 @@
 
 {# New: primary key column definition macro exposed from sql layer #}
 {% macro pk_column_definition(id_type) -%}
-{% if id_type == 'uuid' -%}id UUID PRIMARY KEY DEFAULT gen_random_uuid(){% elif id_type == 'big_integer' -%}id BIGSERIAL PRIMARY KEY{% else -%}id SERIAL PRIMARY KEY{% endif -%}
+{% if id_type == 'uuid' -%}id UUID DEFAULT gen_random_uuid(){% elif id_type == 'big_integer' -%}id BIGSERIAL{% else -%}id SERIAL{% endif -%}
 {%- endmacro %}
 
 {% macro foreign_key_column_type(id_type) -%}

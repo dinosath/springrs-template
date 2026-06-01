@@ -9,6 +9,35 @@ ignore = [
     # webgates uses HMAC-SHA256 for signing; RSA is not exercised in practice.
     "RUSTSEC-2023-0071",
 {% endif -%}
+{% if 'grpc' in protocols -%}
+    # RUSTSEC-2026-0049: rustls-webpki CRL Distribution Point faulty matching logic.
+    # Indirect dep via grpc; CRL distribution points not used in this project.
+    "RUSTSEC-2026-0049",
+    # RUSTSEC-2026-0104: Reachable panic in rustls-webpki CRL parsing.
+    # Only affects code that uses certificate revocation lists; not used here.
+    "RUSTSEC-2026-0104",
+    # RUSTSEC-2026-0098: rustls-webpki URI name constraints were ignored and accepted.
+    # Indirect dep via grpc; URI name constraints not used here.
+    "RUSTSEC-2026-0098",
+    # RUSTSEC-2026-0099: rustls-webpki accepted name constraints for wildcard certs.
+    # Requires misissuance to exploit; only reachable after signature verification.
+    "RUSTSEC-2026-0099",
+    # RUSTSEC-2026-0100: rustls-webpki URI name constraints incorrectly accepted.
+    # Indirect dep via grpc; no external TLS with URI name constraints used here.
+    "RUSTSEC-2026-0100",
+    # RUSTSEC-2026-0101: rustls-webpki CRLs not considered authoritative by Distribution Point.
+    # CRL distribution points not used in this project.
+    "RUSTSEC-2026-0101",
+    # RUSTSEC-2026-0118: hickory-proto NSEC3 unbounded loop on cross-zone responses.
+    # Indirect dep via tonic/grpc; no public DNS resolver exposed.
+    "RUSTSEC-2026-0118",
+    # RUSTSEC-2026-0119: hickory-proto O(n²) name compression CPU exhaustion.
+    # Indirect dep; internal gRPC traffic only.
+    "RUSTSEC-2026-0119",
+    # RUSTSEC-2025-0134: rustls-pemfile unmaintained.
+    # Indirect dep; no direct usage.
+    "RUSTSEC-2025-0134",
+{% endif -%}
 ]
 
 [licenses]
@@ -28,6 +57,7 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
+    "PostgreSQL",
 ]
 
 [bans]

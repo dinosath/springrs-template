@@ -46,19 +46,22 @@ sea-orm = { version = "2.0.0-rc.37", features = ["sqlx-postgres","runtime-tokio-
 diesel = { version = "2", features = ["postgres", "r2d2", "chrono", "64-column-tables"] }
 pq-sys = { version = "0.7", features = ["bundled"] }
 diesel-derive-enum = { version = "2", features = ["postgres"] }
+{% if add_migrations -%}
+diesel_migrations = { version = "2", features = ["postgres"] }
+{% endif -%}
 {% endif -%}
 {{ 'static-serve = "0.6"' if frontend != 'none' }}
 {% if row_level_security -%}
-axum-tenant = { version = "0.1", features = ["axum"{% if orm == 'seaorm' %}, "sea-orm-2"{% endif %}] }
 {% endif -%}
 {% if 'rest' in protocols -%}
 tower-http = { version = "0.6", features = ["set-header"{% if security_level | default('standard') == 'hardened' %}, "limit", "cors"{% endif %}] }
+{% endif -%}
+{% if database != 'none' -%}
 validator = { version = "0.20", features = ["derive"] }
 {% endif -%}
 {% if 'grpc' in protocols -%}
-tonic = "0.14"
-tonic-prost = "0.14"
-prost-types = "0.13"
+grpc = "0.9"
+grpc-protobuf = "0.9"
 {% endif %}
 {{ 'tokio.workspace = true' if orm == "seaorm" else 'tokio = { version = "1", features = ["full"] }' }}
 mimalloc = { version = "0.1.50", features = ["secure"] }
@@ -77,5 +80,5 @@ serial_test = "3"
 
 {% if 'grpc' in protocols -%}
 [build-dependencies]
-tonic-prost-build = "0.14"
+grpc-protobuf-build = "0.9"
 {% endif -%}

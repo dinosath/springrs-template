@@ -8,6 +8,7 @@
     "security_level": "standard",
     "use_seaorm_migrations": false,
     "use_sqlx_migrations": false,
+    "add_migrations": true,
     "features": ["open-telemetry", "helm"],
     "protocols": ["rest"],
     "frontend": "shadcn-admin-kit",

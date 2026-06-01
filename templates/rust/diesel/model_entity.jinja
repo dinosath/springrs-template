@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 {% if 'rest' in protocols -%}
 use validator::Validate;
 {% endif -%}
+// Diesel-compatible aliases for the shared type macros.
+#[allow(dead_code)] type Date = NaiveDate;
+#[allow(dead_code)] type DateTime = NaiveDateTime;
 
 {% for name,property in entity.attributes | items | selectattr('1.enum') -%}
 #[derive(PartialEq, Clone, Debug, Default, Eq, Serialize, Deserialize, diesel_derive_enum::DbEnum)]
@@ -32,15 +35,14 @@ pub struct {{ entity_name | pascal_case }} {
     {% for name, property in entity.attributes | items -%}
     {%- set col_name = rust_types.rust_var(name, false) -%}
     {%- set field_name = col_name if col_name != (entity_name | table_case) else '_' ~ col_name -%}
-    {%- if property.type == 'relation' -%}
+    {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
-    {%- endif -%}
-    {%- elif property.type -%}
+    {% elif property.type -%}
     {% if field_name != col_name %}#[serde(rename = "{{ col_name }}")]
     {% endif -%}
     pub {{ field_name }}: {{ rust_types.get_rust_type(name, property) }},
-    {%- endif -%}
+    {% endif -%}
     {% endfor %}
 }
 
@@ -57,12 +59,12 @@ pub struct New{{ entity_name | pascal_case }} {
     {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
-    {%- elif property.type -%}
+    {% elif property.type -%}
     {{ macros.validator_attrs(name, property) }}
     {% if field_name != col_name %}#[serde(rename = "{{ col_name }}")]
     {% endif -%}
     pub {{ field_name }}: {{ rust_types.get_rust_type(name, property) }},
-    {%- endif -%}
+    {% endif -%}
     {% endfor %}
 }
 
@@ -78,12 +80,12 @@ pub struct {{ entity_name | pascal_case }}Update {
     {%- if property.readOnly or macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
-    {%- elif property.type -%}
+    {% elif property.type -%}
     {{ macros.validator_attrs(name, property) }}
     {% if field_name != col_name %}#[serde(rename = "{{ col_name }}")]
     {% endif -%}
     pub {{ field_name }}: {{ rust_types.get_rust_type(name, property) }},
-    {%- endif -%}
+    {% endif -%}
     {% endfor %}
 }
 
@@ -101,9 +103,9 @@ pub struct {{ entity_name | pascal_case }}Response {
     {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
     {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
     pub {{ name | snake_case }}_id: {% if not property.required %}Option<{% endif %}i32{% if not property.required %}>{% endif %},
-    {%- elif property.type -%}
+    {% elif property.type -%}
     pub {{ rust_types.rust_var(name, false) }}: {{ rust_types.get_rust_type(name, property) }},
-    {%- endif -%}
+    {% endif -%}
     {% endfor %}
 }
 
@@ -123,9 +125,9 @@ impl From<{{ entity_name | pascal_case }}> for {{ entity_name | pascal_case }}Re
             {%- if macros.relation_is_many_to_many(property)=='true' or macros.relation_is_one_to_many(property)=='true' -%}{% continue -%}{%- endif -%}
             {%- if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
             {{ name | snake_case }}_id: model.{{ name | snake_case }}_id,
-            {%- elif property.type -%}
+            {% elif property.type -%}
             {{ col_name }}: model.{{ field_name }},
-            {%- endif -%}
+            {% endif -%}
             {% endfor %}
         }
     }

@@ -1,4 +1,3 @@
-{% if protocol == 'rest' -%}
 import { describe, it, expect } from 'vitest';
 import { dataProvider } from './dataProvider';
 
@@ -68,4 +67,4 @@ describe('dataProvider', () => {
   });
 {% endfor -%}
 });
-{% endif -%}
+

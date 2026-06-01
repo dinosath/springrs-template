@@ -18,7 +18,7 @@ async fn main() {
         .init();
 
     {% if authentication == 'jwt' and 'rest' in protocols -%}
-    {{ project_name | snake_case }}::services::auth_plugin::init_auth();
+    {{ project_name | snake_case }}::services::auth_plugin::init_auth().await;
     {% endif -%}
 
     {% if database != 'none' -%}

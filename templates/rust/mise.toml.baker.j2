@@ -14,30 +14,20 @@ rust = "latest"
 {%- endif %}
 jq = "latest"
 
-[tasks.merge-entities]
-description = "Merge all entity JSON files into answers.json"
-run = '''
-cd .baker
-entities_json=$(jq -n 'reduce inputs as $item ({}; . + {($item|input_filename|split("/")|last|rtrimstr(".json")): $item})' entities/*.json)
-jq --argjson entities "$entities_json" '.entities = $entities' answers.json > tmp.json && mv tmp.json answers.json
-'''
-
 [tasks.generate-local]
 description = "Generate the project files from local repo"
-run = "baker ../saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
-sources = ['.baker/**/*.json']
-depends = ["merge-entities"]
+run = "baker generate ../saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+sources = ['.baker/answers.json']
 
 [tasks.generate]
 description = "Generate the project files"
-run = "baker https://github.com/dinosath/saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
-sources = ['.baker/**/*.json']
-depends = ["merge-entities"]
+run = "baker generate https://github.com/dinosath/saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"
+sources = ['.baker/answers.json']
 
 [tasks.baker-update]
 description = "Update the project files from generated repo"
 run = "baker update --non-interactive --skip-confirms all"
-sources = ['.baker/**/*.json']
+sources = ['.baker/answers.json']
 
 {% if frontend == 'leptos' %}
 [tasks.frontend-install]
@@ -50,6 +40,7 @@ description = "Build Leptos frontend with Trunk"
 dir = "frontend"
 run = "trunk build --release"
 depends = ["frontend-install"]
+env = { CARGO = "~/.cargo/bin/cargo" }
 
 [tasks.frontend-dev]
 description = "Run Leptos frontend dev server"
@@ -57,15 +48,22 @@ dir = "frontend"
 run = "trunk serve --open"
 depends = ["frontend-install"]
 {% elif frontend != "none" %}
+[tasks.frontend-install]
+description = "Install frontend npm dependencies"
+dir = "frontend"
+run = "npm install"
+
 [tasks.frontend-dev]
 description = "Run frontend dev server"
 dir = "frontend"
-run = "mise run dev"
+run = "npm run dev"
+depends = ["frontend-install"]
 
 [tasks.frontend-build]
 description = "Build frontend"
 dir = "frontend"
-run = "mise run"
+run = "npm run build"
+depends = ["frontend-install"]
 {% endif %}
 
 [tasks.build]
@@ -75,7 +73,7 @@ run = "cargo build --release"
 
 [tasks.test]
 description = "Run tests"
-run = "cargo nextest run --all"
+run = "cargo nextest run --all --test-threads 4"
 
 [tasks.test-coverage]
 description = "Run tests for coverage report"
@@ -118,7 +116,19 @@ dir="helm"
 run = "helm push {{ project_name | kebab_case }}"
 depends = ["helm-package"]
 {% endif %}
+{% if add_migrations and orm == 'diesel' %}
+[tasks.db-migrate]
+description = "Run pending diesel migrations"
+run = "diesel migration run"
 
+[tasks.db-rollback]
+description = "Revert the last diesel migration"
+run = "diesel migration revert"
+
+[tasks.db-redo]
+description = "Revert then re-apply the last diesel migration"
+run = "diesel migration redo"
+{% endif %}
 [tasks.post-generate]
 description = "Post generation tasks"
 run = '''
@@ -130,10 +140,24 @@ cargo update
 [tasks.build-and-test]
 description = "Build and test the project"
 run = [
+    { task = "post-generate" },
+    { task = "cargo-chef" },
+    { tasks = ["test","audit"] },
+    { task = "docker-build" },
+    { task = "e2e" },
+    {{ '{ task = "helm-package" },' if "helm" in features }}
+]
+
+[tasks.build-frontend-and-test]
+description = "Build frontend and test the project"
+run = [
     {{ '{ task = "frontend-build" },' if frontend != "none" }}
     { task = "post-generate" },
     { task = "cargo-chef" },
-    { tasks = ["test","audit","e2e","docker-build"{{',"helm-package"' if "helm" in features }}] },
+    { tasks = ["test","audit"] },
+    { task = "docker-build" },
+    { task = "e2e" },
+    {{ '{ task = "helm-package" },' if "helm" in features }}
 ]
 
 [tasks.generate-local-and-test]

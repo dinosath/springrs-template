@@ -69,10 +69,19 @@ diesel::table! {
 {% endif -%}
 {% endfor -%}
 
+{% set ns_join = namespace(seen=[]) -%}
 {% for entity_name, entity in entities | items | selectattr("1.attributes") -%}
 {% for name, property in entity.attributes | items -%}
 {% if macros.relation_is_many_to_one(property)=='true' or macros.relation_is_one_to_one(property)=='true' -%}
-diesel::joinable!({{ entity_name | table_case }} -> {{ property.target | table_case }} ({{ name | snake_case }}_id));
+{%- set src = entity_name | table_case -%}
+{%- set tgt = property.target | table_case -%}
+{%- if src != tgt -%}
+{%- set pair = [src, tgt] | sort | join(':') -%}
+{%- if pair not in ns_join.seen -%}
+{%- set ns_join.seen = ns_join.seen + [pair] -%}
+diesel::joinable!({{ src }} -> {{ tgt }} ({{ name | snake_case }}_id));
+{% endif -%}
+{% endif -%}
 {% endif -%}
 {% endfor -%}
 {% endfor -%}

@@ -30,6 +30,7 @@ use webgates::groups::Group;
 use webgates::roles::Role;
 use webgates_repositories::memory::account::MemoryAccountRepository;
 use webgates_repositories::memory::secret::MemorySecretRepository;
+use webgates_repositories::services::account_insert::AccountInsertService;
 
 // ─── Type aliases ─────────────────────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AuthUser {
 // ─── Initialization ───────────────────────────────────────────────────────────
 
 /// Core auth initialization logic shared by both backends.
-fn init_auth_state() {
+async fn init_auth_state() {
     // jsonwebtoken 10.x requires an explicit CryptoProvider before any encode/decode.
     let _ = webgates::codecs::jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER
         .install_default();
@@ -122,6 +123,15 @@ fn init_auth_state() {
         MemorySecretRepository::new_with_argon2_hasher()
             .expect("failed to initialise password-hashing repository"),
     );
+
+    // Seed the default admin account so the application is usable out of the box.
+    AccountInsertService::<Role, Group>::insert("admin", "admin")
+        .into_repositories(
+            Arc::clone(&account_repo),
+            Arc::clone(&secret_repo),
+        )
+        .await
+        .expect("failed to seed admin user");
 
     let jwt_options = JsonWebTokenOptions::default();
 
@@ -145,7 +155,7 @@ pub struct AuthPlugin;
 #[async_trait]
 impl Plugin for AuthPlugin {
     async fn build(&self, _app: &mut AppBuilder) {
-        init_auth_state();
+        init_auth_state().await;
     }
 }
 {% elif backend == 'axum' -%}
@@ -153,7 +163,7 @@ impl Plugin for AuthPlugin {
 
 /// Initialise the global authentication state. Call once at startup before
 /// serving requests.
-pub fn init_auth() {
-    init_auth_state();
+pub async fn init_auth() {
+    init_auth_state().await;
 }
 {% endif -%}

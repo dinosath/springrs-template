@@ -9,9 +9,11 @@ pub mod models {
 }
 pub mod app_state;
 {% endif -%}
+{% if (authentication == 'jwt' and 'rest' in protocols) or row_level_security or (add_migrations and orm == 'seaorm') -%}
 pub mod services {
     automod::dir!(pub "src/services");
 }
+{%- endif %}
 {% if frontend == 'leptos' -%}
 use static_serve::embed_assets;
 
